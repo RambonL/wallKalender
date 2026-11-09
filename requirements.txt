@@ -1,0 +1,5 @@
+icalendar==7.3.0
+recurring-ical-events==3.8.2
+pillow==13.0.0
+python-dateutil==2.9.0.post0
+paho-mqtt==2.2.0
