@@ -9,6 +9,7 @@ as a web page and as a grayscale PNG (1872×1404) for an e-ink display.
 - Vacation and holidays highlighted pink, Teams meetings blue, all-day events gray
 - Event time as start, start–end, or start with duration
 - Dark mode
+- Calendars can be hidden and shown again from the "Kalender" menu
 - The page reloads by itself when the view changes (e.g. from a Stream Deck) and every 5 minutes
 
 The interface is in German.
@@ -73,12 +74,14 @@ Settings apply to all browsers at once and are kept in memory only.
 | `/raster` | week as time grid or list |
 | `/zeit` | event time: start → start–end → duration |
 | `/dark` | dark mode on/off (the PNG stays light) |
+| `/cal/1`, `/cal/2`, … | hide/show a calendar, numbered in `ICS_URLS` order (menu "Kalender" from two calendars on) |
 
 ## Settings (`.env`)
 
 | Variable | Meaning |
 |---|---|
 | `ICS_URLS` | calendar URLs separated by spaces (`https://`, `webcal://`, `file://`), refetched every 5 min |
+| `ICS_NAMES` | names for the "Kalender" menu, separated by spaces, same order as `ICS_URLS`; without it the name comes from the calendar file |
 | `PORT` | default 8080 |
 | `TZ` | default `Europe/Berlin` |
 | `DEVICE_REFRESH_URL` | receives a POST on every view change so the display refreshes right away |

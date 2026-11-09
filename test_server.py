@@ -118,7 +118,7 @@ for (name, we), n in cells.items():
     assert html.count('class="day') == n, (name, we)
     assert 'class="day today"' in html and ">AT 4<" in html                                 # Do 5.11. eingekreist, AT 4
     assert "Tom &amp; Jerry &lt;Party&gt;" in html and "<Party>" not in html                 # Titel escaped
-    assert f'const state = "{name}|{we:d}|0|start|1|0|2026-11-05|{server.START}"' in html  # Raster ist Standard, hell
+    assert f'const state = "{name}|{we:d}|0|start|1|0||2026-11-05|{server.START}"' in html  # Raster ist Standard, hell
     if len(sys.argv) > 1:
         out = f"{sys.argv[1]}/{name}{'' if we else '-mofr'}"
         img.save(f"{out}.png")
@@ -207,4 +207,15 @@ assert '<div class="ev teams">' in server.html_items(evs[date(2026, 11, 9)])    
 assert '<div class="ev allday teams">' in server.html_items(evs[date(2026, 11, 23)])
 assert not any(t == "Messe" for _, _, t, _ in evs.get(date(2026, 11, 26), []))
 assert not any(t == "Abgesagt" for items in evs.values() for _, _, t, _ in items)
+
+# Kalender-Menü ab zwei Kalendern, Name aus ICS_NAMES oder X-WR-CALNAME; ausgeblendet fehlt in Terminen und Webseite
+server.ICS_URLS, server.ICS_NAMES = ["privat", "teams"], ["Privat"]
+server._cals["privat"] = icalendar.Calendar.from_ical(ICS)
+html = server.page(today)
+assert '<details><summary>Kalender</summary><div><a href="/cal/1">☑ Privat</a><a href="/cal/2">☑ Teams</a>' in html
+server.hidden = {1}
+evs = server.events(date(2026, 11, 1), date(2026, 11, 30))
+assert evs[date(2026, 11, 9)] and not any(n == "Teams" for items in evs.values() for *_, n in items)
+html = server.page(today, kal=True)
+assert "<details open><summary class=aus>Kalender<" in html and "☐ Teams" in html and "|1|2026-11-05|" in html
 print("ok")

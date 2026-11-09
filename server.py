@@ -9,9 +9,10 @@ GET|POST /prev /next   einen Monat bzw. eine Woche zurück/weiter; /today zurüc
 GET|POST /zeit         Uhrzeit der Termine als Start, von–bis oder Start mit Dauer
 GET|POST /raster       Woche als Outlook-Raster (Standard, Stunden senkrecht) oder als Liste
 GET|POST /dark         Dunkelmodus der Webseite an/aus (das E-Ink-Bild bleibt hell)
-GET /state             Ansicht, Wochenende, Verschiebung, Zeitanzeige, Raster, Datum, Serverstart; fragt die Webseite alle 3 s ab
+GET|POST /cal/<n>      Kalender n (1, 2, … wie in ICS_URLS) aus-/einblenden, auf der Webseite im Menü „Kalender“
+GET /state             Ansicht, Wochenende, Verschiebung, Zeitanzeige, Raster, Dunkel, aus-Kalender, Datum, Serverstart; fragt die Webseite alle 3 s ab
 
-Env: ICS_URLS (Leerzeichen-getrennt), DEVICE_REFRESH_URL, TZ, PORT, DARK=1 (startet im Dunkelmodus),
+Env: ICS_URLS (Leerzeichen-getrennt), ICS_NAMES (Namen im Menü, gleiche Reihenfolge), DEVICE_REFRESH_URL, TZ, PORT, DARK=1 (startet im Dunkelmodus),
      THEME_CSS (eigene CSS-Datei, kommt nach dem eingebauten CSS, z. B. eigene Farben für .dark)
 """
 import calendar
@@ -34,6 +35,7 @@ from PIL import Image, ImageDraw, ImageFont
 W, H = 1872, 1404
 TZ = ZoneInfo(os.environ.get("TZ", "Europe/Berlin"))
 ICS_URLS = [u.replace("webcal://", "https://", 1) for u in os.environ.get("ICS_URLS", "").split()]
+ICS_NAMES = os.environ.get("ICS_NAMES", "").split()  # Namen im Menü „Kalender“, gleiche Reihenfolge wie ICS_URLS
 DEVICE_REFRESH_URL = os.environ.get("DEVICE_REFRESH_URL", "")
 THEME_CSS = os.environ.get("THEME_CSS", "")
 CACHE_SECONDS = 300
@@ -83,7 +85,15 @@ def calendars():
                 except Exception as e:  # alter Stand bleibt; URL nicht loggen, sie ist ein Secret
                     _failed.add(url)
                     print(f"Kalender {i + 1}: {e}", flush=True)
-        return list(_cals.values())
+        off = {ICS_URLS[i] for i in hidden}  # ausgeblendete werden weiter abgerufen, sind beim Einblenden gleich da
+        return [c for url, c in _cals.items() if url not in off]
+
+
+def cal_name(i):
+    """Name von Kalender i im Menü: aus ICS_NAMES, sonst X-WR-CALNAME aus der Datei, sonst "Kalender n"."""
+    if i < len(ICS_NAMES):
+        return ICS_NAMES[i]
+    return str(_cals.get(ICS_URLS[i], {}).get("X-WR-CALNAME", "")) or f"Kalender {i + 1}"
 
 
 def local(x):
@@ -365,6 +375,11 @@ nav{display:flex;flex-wrap:wrap;gap:.2em 1em;align-items:baseline;color:var(--mu
 nav>*{white-space:nowrap}
 nav a{color:inherit;font-size:1.15em}
 nav a.on{color:var(--fg);font-weight:700;text-decoration:none}
+nav details{position:relative}
+nav summary{cursor:pointer;font-size:1.15em}
+nav summary.aus{color:var(--red)}  /* ein Kalender ist ausgeblendet; nur Farbe, damit die Leiste nicht springt */
+nav details>div{position:absolute;left:0;z-index:9;display:flex;flex-direction:column;gap:.3em;margin-top:.3em;padding:.5em .8em;
+  background:var(--bg);border:2px solid var(--faint);border-radius:.4em}
 main{flex:1;min-height:0;display:grid;grid-template-columns:repeat(var(--n,7),minmax(0,1fr));border-top:2px solid var(--line)}
 .wd{text-align:center;font-weight:700;padding:.2em;border-bottom:2px solid var(--line)}
 .day{border-right:2px solid var(--line);border-bottom:2px solid var(--line);padding:.25em .35em 0;background:var(--bg);overflow-y:auto;scrollbar-width:none}
@@ -423,6 +438,7 @@ for (const day of document.querySelectorAll(".day")) {  // Zelle scrollt ohne Le
   more.onclick = () => day.scrollBy({top: day.clientHeight * 0.7, behavior: "smooth"});
   update();
 }
+if (location.search) history.replaceState(null, "", "/");  // /?kal hält das Kalender-Menü nur nach dem Klick offen
 const loaded = Date.now();
 setInterval(async () => {
   try {
@@ -500,6 +516,7 @@ ZEITEN = {"start": "Start", "bis": "von–bis", "dauer": "Dauer"}  # testweise, 
 zeit = "start"
 raster = True  # Woche als Outlook-Raster; /raster schaltet auf Liste um
 dark = os.environ.get("DARK") == "1"  # Dunkelmodus der Webseite (CSS .dark, eigene Farben per THEME_CSS)
+hidden = set()  # Nummern (ab 0) der ausgeblendeten Kalender aus ICS_URLS; /cal/<n> schaltet
 
 
 def shown_date(today):
@@ -511,7 +528,7 @@ def shown_date(today):
 
 
 def state(today):
-    return f"{view}|{weekend:d}|{offset}|{zeit}|{raster:d}|{dark:d}|{today}|{START}"
+    return f"{view}|{weekend:d}|{offset}|{zeit}|{raster:d}|{dark:d}|{','.join(map(str, sorted(hidden)))}|{today}|{START}"
 
 
 def theme_css():
@@ -522,12 +539,17 @@ def theme_css():
         return ""
 
 
-def page(today):
+def page(today, kal=False):
     title, body = VIEWS[view][2](shown_date(today), today)
     nav = "".join(f'<a href="/view/{k}"{" class=on" if k == view else ""}>{label}</a>'
                   for k, (label, _, _) in VIEWS.items())
     nav += f'<a href="/weekend">{"☑" if weekend else "☐"} Wochenende</a><a href="/zeit">Zeit: {ZEITEN[zeit]}</a>'
     nav += f'<a href="/raster">{"☑" if raster else "☐"} Raster</a>' * (view == "week")
+    if len(ICS_URLS) > 1:
+        links = "".join(f'<a href="/cal/{i + 1}">{"☐" if i in hidden else "☑"} {escape(cal_name(i))}</a>'
+                        for i in range(len(ICS_URLS)))
+        nav += (f'<details{" open" * kal}><summary{" class=aus" * bool(hidden)}>Kalender</summary>'
+                f'<div>{links}</div></details>')
     nav += f'<a href="/dark">{"☑" if dark else "☐"} Dunkel</a>'
     return (f'<!doctype html><html lang="de"{" class=dark" * dark}><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>Kalender</title>'
@@ -549,18 +571,19 @@ def poke_device():
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        global view, weekend, offset, zeit, raster, dark
+        global view, weekend, offset, zeit, raster, dark, hidden
         path = self.path.split("?")[0].strip("/")
         today = datetime.now(TZ).date()
         if path == "":
-            self.reply(page(today).encode(), "text/html; charset=utf-8")
+            self.reply(page(today, "kal" in self.path).encode(), "text/html; charset=utf-8")
         elif path == "state":
             self.reply(state(today).encode(), "text/plain")
         elif path == "image.png":
             buf = io.BytesIO()
             VIEWS[view][1](shown_date(today), today).save(buf, "PNG")
             self.reply(buf.getvalue(), "image/png")
-        elif path in ("weekend", "prev", "next", "today", "zeit", "raster", "dark") or path.startswith("view/") and path[5:] in VIEWS:
+        elif path in ("weekend", "prev", "next", "today", "zeit", "raster", "dark") or path.startswith("view/") and path[5:] in VIEWS \
+                or path in [f"cal/{i + 1}" for i in range(len(ICS_URLS))]:
             if path == "weekend":
                 weekend = not weekend
             elif path == "raster":
@@ -569,6 +592,8 @@ class Handler(BaseHTTPRequestHandler):
                 dark = not dark
             elif path == "zeit":
                 zeit = list(ZEITEN)[(list(ZEITEN).index(zeit) + 1) % len(ZEITEN)]
+            elif path.startswith("cal/"):
+                hidden ^= {int(path[4:]) - 1}
             elif path in ("prev", "next", "today"):
                 offset = {"prev": offset - 1, "next": offset + 1, "today": 0}[path]
             else:
@@ -577,7 +602,7 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=poke_device, daemon=True).start()
             if "text/html" in self.headers.get("Accept", ""):  # Klick auf der Webseite: zurück zur Ansicht
                 self.send_response(303)
-                self.send_header("Location", "/")
+                self.send_header("Location", "/?kal" if path.startswith("cal/") else "/")
                 self.send_header("Content-Length", "0")
                 self.end_headers()
             else:
