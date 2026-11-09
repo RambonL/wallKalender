@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Teams-Arbeitskalender als teams.ics, geholt über teams-for-linux (MQTT-Befehl get-calendar, Microsoft Graph).
 
-Läuft dauerhaft und schreibt alle 5 min die Termine nach TEAMS_ICS: aktueller und nächster Monat frisch,
+Läuft dauerhaft und schreibt alle 5 min die Termine in die Datei aus -o (sonst TEAMS_ICS, sonst teams.ics im
+aktuellen Ordner): aktueller und nächster Monat frisch,
 dazu 2 Monate zurück bis 6 Monate voraus, die nur einmal pro Stunde neu geholt werden (ändern sich selten).
 Der Kalender-Server liest die Datei wie jeden anderen Kalender: ICS_URLS="file:///<pfad>/teams.ics ..."
 Antwortet Teams nicht (PC aus, Teams zu), bleibt die alte Datei stehen.
@@ -11,6 +12,7 @@ Voraussetzung in der config.json von teams-for-linux: "graphApi": {"enabled": tr
 Env: TEAMS_MQTT=mqtt://benutzer:passwort@host:1883 (Sonderzeichen im Passwort %-kodiert), TEAMS_ICS (Standard teams.ics),
      TEAMS_TOPIC (topicPrefix aus der teams-for-linux-Config, Standard teams), TZ
 """
+import argparse
 import calendar
 import json
 import os
@@ -93,8 +95,13 @@ def to_ics(events):
 
 
 def main():
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("-o", "--output", default=os.environ.get("TEAMS_ICS", "teams.ics"),
+                   help="wohin die ICS-Datei geschrieben wird (Standard: $TEAMS_ICS, sonst teams.ics)")
+    path = p.parse_args().output
+    if not os.path.isdir(os.path.dirname(os.path.abspath(path))):  # sonst meldet die Schleife nur "Teams antwortet nicht"
+        p.error(f"Ordner für {path} gibt es nicht")
     url = urlsplit(os.environ["TEAMS_MQTT"])
-    path = os.environ.get("TEAMS_ICS", "teams.ics")
     answers = queue.Queue()
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="wallKalender")  # nie "teams-for-linux", sonst fliegt Teams vom Broker
     client.username_pw_set(unquote(url.username), unquote(url.password))

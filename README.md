@@ -88,6 +88,9 @@ and writes them to `teams.ics` every 5 minutes. The file only contains titles an
 2. Set `TEAMS_MQTT` in `.env` and add `file:///…/teams.ics` to `ICS_URLS`.
 3. Keep `set -a; . ./.env; set +a; .venv/bin/python teams_ics.py` running.
 
+The file goes to `teams.ics` in the current directory. Use `-o /path/teams.ics` (or `TEAMS_ICS`) to put it
+somewhere else, and point `ICS_URLS` there.
+
 `get-calendar` returns at most 10 events per request
 ([#3202](https://github.com/IsmaelMartinez/teams-for-linux/issues/3202)), so `teams_ics.py` keeps splitting the
 time range until it has everything.
