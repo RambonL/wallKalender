@@ -116,7 +116,7 @@ for (name, we), n in cells.items():
     assert img.size == (server.W, server.H) and img.mode == "L"
     html = server.page(today)
     assert html.count('class="day') == n, (name, we)
-    assert 'class="day today"' in html and ">AT 4<" in html                                 # Do 5.11. eingekreist, AT 4
+    assert 'class="day today"' in html and ">AT 4<" in html and ('data-d="Do 5.11."' in html) == (name == "month")                                 # Do 5.11. eingekreist, AT 4
     assert "Tom &amp; Jerry &lt;Party&gt;" in html and "<Party>" not in html                 # Titel escaped
     assert f'const state = "{name}|{we:d}|0|start|1|0||2026-11-05|{server.START}"' in html  # Raster ist Standard, hell
     if len(sys.argv) > 1:
@@ -131,9 +131,10 @@ for off, want in ((0, date(2026, 11, 1)), (2, date(2027, 1, 1)), (-11, date(2025
     assert server.shown_date(today) == want, (off, server.shown_date(today))
 server.offset = 1
 html = server.page(today)
-assert "<h1>Dezember 2026</h1>" in html and 'class="day today"' not in html                    # heute nicht im Dezember
+assert "<h1>Dezember 2026</h1>" in html and "class=stand>Stand" in html and 'class="day today"' not in html                    # heute nicht im Dezember
 server.view = "week"
 assert server.shown_date(today) == date(2026, 11, 12)
+assert "<span class=kurz>KW 46 · 9.11.–15.11.</span>" in server.page(today)                  # kurzer Titel fürs Handy
 server.offset = 0
 
 # KW im Montagsfeld der Monatsansicht (Nov 2026: erste Zeile ab 26.10. = KW 44, sechs Zeilen)

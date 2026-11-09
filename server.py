@@ -418,7 +418,19 @@ main.raster{grid-template-columns:3.2em repeat(var(--n),minmax(0,1fr));grid-temp
 .blk.urlaub{background:var(--urlaub);border-left-color:var(--urlaub-edge)}
 .now{position:absolute;left:0;right:0;border-top:2px solid var(--red);z-index:1}
 .now::before{content:"";position:absolute;left:-5px;top:-6px;width:10px;height:10px;border-radius:50%;background:var(--red)}
-@media (max-width:700px){.week{grid-template-columns:1fr;overflow-y:auto}.week .day{border-right:0}.month .at{float:none;display:block;margin:0}}
+.kurz,.agenda{display:none}
+@media (max-width:700px){.week{grid-template-columns:1fr;overflow-y:auto}.week .day{border-right:0}.month .at{float:none;display:block;margin:0}
+  /* Handy: kompakter Kopf (kurzer Wochentitel, kleinere Leiste, ohne "Stand"), im Raster-Kopf kein AT */
+  .lang,.stand,.raster .head .at{display:none}.kurz{display:inline}
+  header{padding:.3em .6em}h1,.arrow{font-size:1.2rem}nav{gap:.1em .8em}nav a,nav summary{font-size:.95em}
+  /* Handy-Monat: kompaktes Raster mit Strichen je Termin, darunter die angetippte Woche als Liste (JS baut .agenda) */
+  .month{flex:none;grid-template-rows:auto!important}.month .at,.month .kwm{display:none}.month .num{display:grid}.month .day{padding-bottom:.2em;font-size:0}
+  .month .ev{display:inline-block;width:.8rem;height:.3rem;margin:.1rem;padding:0;font-size:0;background:var(--muted)}
+  .month .ev.teams{background:var(--teams-edge)}.month .ev.urlaub{background:var(--urlaub-edge)}
+  .month .day:not(.sel){opacity:.45}
+  .agenda{display:block;flex:1;min-height:0;overflow-y:auto;scrollbar-width:none;padding:0 .6em .6em}
+  .agenda h3{font-size:1rem;margin:.7em 0 .2em;border-bottom:1px solid var(--line)}.agenda h3.today{color:var(--red)}.agenda h3.kw{border:0;color:var(--muted)}
+  .agenda h3 span{font-weight:400;font-size:.85em;color:var(--muted)}.agenda .ev{white-space:normal;font-size:1rem;padding:.15em .4em}}
 """
 
 # Lädt neu, wenn Ansicht oder Datum wechselt (Stream Deck) und alle 5 min für neue Termine.
@@ -437,6 +449,20 @@ for (const day of document.querySelectorAll(".day")) {  // Zelle scrollt ohne Le
   day.addEventListener("scroll", update, {passive: true});
   more.onclick = () => day.scrollBy({top: day.clientHeight * 0.7, behavior: "smooth"});
   update();
+}
+const m = document.querySelector("main.month");  // Handy: angetippte Woche unter dem Monat als Liste
+if (m) {
+  const n = +m.style.getPropertyValue("--n"), cells = [...m.querySelectorAll(".day")];
+  const ag = Object.assign(document.createElement("div"), {className: "agenda"});
+  m.after(ag);
+  const show = w => {
+    cells.forEach((c, i) => c.classList.toggle("sel", Math.floor(i / n) === w));
+    ag.innerHTML = `<h3 class=kw>${cells[w * n].querySelector(".kwm").textContent}</h3>` + cells.slice(w * n, w * n + n).map(c =>
+      `<h3${c.classList.contains("today") ? " class=today" : ""}>${c.dataset.d} <span>${c.querySelector(".at").textContent}</span></h3>`
+      + [...c.querySelectorAll(".ev")].map(e => e.outerHTML).join("")).join("");
+  };
+  cells.forEach((c, i) => c.addEventListener("click", () => show(Math.floor(i / n))));
+  show(Math.max(0, Math.floor(cells.findIndex(c => c.classList.contains("today")) / n)));
 }
 if (location.search) history.replaceState(null, "", "/");  // /?kal hält das Kalender-Menü nur nach dem Klick offen
 const loaded = Date.now();
@@ -474,7 +500,8 @@ def html_month(shown, today):
     title, weeks, evs = month_data(shown)
     n = len(weeks[0])
     cells = [f'<div class="wd">{t}</div>' for t in TAGE[:n]]
-    cells += [f'<div class="{day_class(day, today, c, n, evs.get(day, []), day.month != shown.month)}">'
+    cells += [f'<div class="{day_class(day, today, c, n, evs.get(day, []), day.month != shown.month)}"'
+              f' data-d="{TAGE[c]} {day.day}.{day.month}.">'  # Überschrift in der Handy-Liste (JS)
               f'<span class="num">{day.day}</span>{f"<span class=kwm>KW {day.isocalendar().week}</span>" * (c == 0)}'
               f'<span class="at">{tag_label(day)}</span>{html_items(evs.get(day, []))}</div>'
               for week in weeks for c, day in enumerate(week)]
@@ -485,6 +512,9 @@ def html_month(shown, today):
 def html_week(shown, today):
     title, days, evs = week_data(shown)
     n = len(days)
+    a, b = days[0], days[-1]
+    title = (f'<span class=lang>{title}</span>'
+             f'<span class=kurz>KW {a.isocalendar().week} · {a.day}.{a.month}.–{b.day}.{b.month}.</span>')  # Handy
     cols = [f'<div class="{day_class(day, today, c, n, evs.get(day, []))}"><div class="head">{TAGE[c]}'
             f'<span class="at">{tag_label(day)}</span><span class="num">{day.day}</span></div>'
             f'{html_items([i for i in evs.get(day, []) if not (raster and i[0])])}</div>'  # Raster: oben nur Ganztägige
@@ -556,7 +586,7 @@ def page(today, kal=False):
             f'<style>{CSS}{theme_css()}</style></head><body>'
             f'<header><div class="titel"><a class="heute" href="/today">Heute</a>'  # links vom Titel, damit nichts springt
             f'<a class="arrow" href="/prev" aria-label="zurück">‹</a><a class="arrow" href="/next" aria-label="weiter">›</a>'
-            f'<h1>{title}</h1></div><nav>{nav}<span>{stand()}</span></nav></header>{body}'
+            f'<h1>{title}</h1></div><nav>{nav}<span{" class=stand" * (not _failed)}>{stand()}</span></nav></header>{body}'
             f'<script>const state = "{state(today)}";{JS}</script></body></html>')
 
 
