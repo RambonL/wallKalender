@@ -1,0 +1,21 @@
+services:
+  wallkalender:
+    build: .
+    env_file: .env
+    environment:
+      PORT: "8080"
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - ./data:/data:ro   # teams.ics, theme.css
+    restart: unless-stopped
+
+  # optional: docker compose --profile teams up -d
+  teams:
+    build: .
+    profiles: [teams]
+    env_file: .env
+    command: ["python", "teams_ics.py", "-o", "/data/teams.ics"]
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

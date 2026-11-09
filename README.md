@@ -46,6 +46,18 @@ set -a; . ./.env; set +a
 
 Self-test: `.venv/bin/python test_server.py` prints `ok`.
 
+### Docker
+
+```sh
+cp .env.example .env          # add your calendar URLs
+cp docker-compose.example.yml docker-compose.yml
+docker compose up -d          # http://host:8080 (or PORT from .env)
+```
+
+Files for the container go into `./data/` (mounted as `/data`): for example `theme.css` with
+`THEME_CSS=/data/theme.css`. To fetch the Teams calendar in a second container, set `TEAMS_MQTT`,
+add `file:///data/teams.ics` to `ICS_URLS` and start with `docker compose --profile teams up -d`.
+
 ## Control
 
 Everything works by clicking on the page or by calling a URL, e.g. from a Stream Deck: `curl http://host:8080/view/week`.

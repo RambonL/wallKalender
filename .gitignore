@@ -5,3 +5,5 @@ __pycache__/
 teams.ics*
 RECHERCHE.md
 theme.css
+data/
+docker-compose.yml

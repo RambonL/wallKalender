@@ -1,0 +1,5 @@
+# Nur was das Image braucht; .env, teams.ics usw. bleiben draußen
+*
+!requirements.txt
+!server.py
+!teams_ics.py
