@@ -15,9 +15,13 @@ The interface is in German.
 
 ![Month view](docs/month.png)
 
-| Week as time grid, dark mode | Working week only |
+| Week as time grid | Week as list |
 |---|---|
-| ![Week view, dark](docs/week-dark.png) | ![Month view without weekends](docs/month-workweek.png) |
+| ![Week view as time grid](docs/week.png) | ![Week view as list](docs/week-list.png) |
+
+| Working week only | Week with weekend |
+|---|---|
+| ![Month view without weekends](docs/month-workweek.png) | ![Week list with weekend](docs/week-weekend.png) |
 
 E-ink PNG (`/image.png`, 1872×1404 grayscale):
 
