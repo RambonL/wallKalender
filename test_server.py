@@ -1,5 +1,6 @@
 """Selbsttest: .venv/bin/python test_server.py [ordner]  (mit Ordner: Vorschau-PNGs dort ablegen)"""
 import sys
+import tempfile
 from datetime import date
 
 import icalendar
@@ -159,6 +160,15 @@ if len(sys.argv) > 1:
     img.save(f"{sys.argv[1]}/week-raster.png")
     open(f"{sys.argv[1]}/week-raster.html", "w").write(html)
 server.view = "month"
+
+# THEME_CSS: eigene Farben landen hinter dem eingebauten CSS, fehlende Datei stört nicht
+with tempfile.NamedTemporaryFile("w", suffix=".css") as f:
+    f.write(".dark{--bg:#123456}")
+    f.flush()
+    server.THEME_CSS = f.name
+    assert ".dark{--bg:#123456}</style>" in server.page(today)
+assert "#123456" not in server.page(today)  # Datei weg
+server.THEME_CSS = ""
 
 # Teams: trotz 10er-Grenze pro Antwort kommen alle Termine an, und die ICS-Datei landet richtig im Kalender
 import teams_ics  # noqa: E402

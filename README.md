@@ -66,10 +66,23 @@ Settings apply to all browsers at once and are kept in memory only.
 | `PORT` | default 8080 |
 | `TZ` | default `Europe/Berlin` |
 | `DEVICE_REFRESH_URL` | receives a POST on every view change so the display refreshes right away |
+| `DARK` | `1` starts in dark mode |
+| `THEME_CSS` | path to your own CSS file, added after the built-in styles (see below) |
 | `TEAMS_MQTT`, `TEAMS_ICS`, `TEAMS_TOPIC` | only for `teams_ics.py`, see below |
 
 Public holidays are defined at the top of `server.py` (`FEIERTAGE_FEST`, `FEIERTAGE_OSTERN`). For another region,
 comment days in or out there.
+
+## Own colors
+
+All colors are CSS variables. Put the ones you want to change into a file and set `THEME_CSS` to its path.
+The file is read on every page load, so edits show up after a reload. Light mode is `:root`, dark mode `.dark`:
+
+```css
+.dark{--bg:#1e1e2e;--fg:#cdd6f4;--line:#45475a;--we:#181825;--red:#f38ba8;--urlaub:#5e3a4a;--urlaub-edge:#f38ba8}
+```
+
+All variables are listed at the top of `CSS` in `server.py`.
 
 ## Google Calendar
 

@@ -4,3 +4,4 @@ __pycache__/
 !.env.example
 teams.ics*
 RECHERCHE.md
+theme.css

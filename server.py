@@ -11,7 +11,8 @@ GET|POST /raster       Woche als Outlook-Raster (Standard, Stunden senkrecht) od
 GET|POST /dark         Dunkelmodus der Webseite an/aus (das E-Ink-Bild bleibt hell)
 GET /state             Ansicht, Wochenende, Verschiebung, Zeitanzeige, Raster, Datum, Serverstart; fragt die Webseite alle 3 s ab
 
-Env: ICS_URLS (Leerzeichen-getrennt), DEVICE_REFRESH_URL, TZ, PORT
+Env: ICS_URLS (Leerzeichen-getrennt), DEVICE_REFRESH_URL, TZ, PORT, DARK=1 (startet im Dunkelmodus),
+     THEME_CSS (eigene CSS-Datei, kommt nach dem eingebauten CSS, z. B. eigene Farben für .dark)
 """
 import calendar
 import functools
@@ -34,6 +35,7 @@ W, H = 1872, 1404
 TZ = ZoneInfo(os.environ.get("TZ", "Europe/Berlin"))
 ICS_URLS = [u.replace("webcal://", "https://", 1) for u in os.environ.get("ICS_URLS", "").split()]
 DEVICE_REFRESH_URL = os.environ.get("DEVICE_REFRESH_URL", "")
+THEME_CSS = os.environ.get("THEME_CSS", "")
 CACHE_SECONDS = 300
 MONATE = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli",
           "August", "September", "Oktober", "November", "Dezember"]
@@ -349,9 +351,9 @@ CSS = """
 *{box-sizing:border-box;margin:0}
 :root{--bg:#fff;--fg:#000;--line:#000;--muted:#555;--faint:#888;--we:#ececec;--pink:#fdebf2;--red:#d32f2f;--allday:#d2d2d2;
   --teams:#e4eefb;--teams2:#bcd4f3;--teams-edge:#5b8fd6;--urlaub:#f9d3e3;--urlaub-edge:#d6699a;--grid:#ccc;--blk:#eee;--blk-edge:#888}
-/* Dunkel: Material-Farben aus DMS/matugen (~/.cache/DankMaterialShell/dms-colors.json, colors.dark), Teams bleibt blau */
-.dark{--bg:#271d1e;--fg:#f0dede;--line:#524344;--muted:#d7c1c2;--faint:#9f8c8d;--we:#1a1112;--pink:#3d2426;--red:#ffb2b7;--allday:#3d3232;
-  --teams:#263445;--teams2:#34506e;--teams-edge:#7fb0e8;--urlaub:#723339;--urlaub-edge:#ffb2b7;--grid:#3d3232;--blk:#322828;--blk-edge:#9f8c8d}
+/* Dunkel: neutrales Grau; eigene Farben per THEME_CSS */
+.dark{--bg:#1e1e1e;--fg:#e6e6e6;--line:#444;--muted:#b3b3b3;--faint:#888;--we:#161616;--pink:#3b2a31;--red:#f28b82;--allday:#3a3a3a;
+  --teams:#263445;--teams2:#34506e;--teams-edge:#7fb0e8;--urlaub:#5c2f44;--urlaub-edge:#e57fae;--grid:#383838;--blk:#2c2c2c;--blk-edge:#888}
 html{background:var(--bg)}
 body{font:16px/1.25 system-ui,sans-serif;background:var(--bg);color:var(--fg);height:100dvh;display:flex;flex-direction:column}
 header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:.3em 1em;padding:.4em .8em}
@@ -497,7 +499,7 @@ offset = 0  # Pfeile: Monate bzw. Wochen ab heute; Ansichtswechsel setzt auf 0 z
 ZEITEN = {"start": "Start", "bis": "von–bis", "dauer": "Dauer"}  # testweise, /zeit schaltet reihum
 zeit = "start"
 raster = True  # Woche als Outlook-Raster; /raster schaltet auf Liste um
-dark = False  # Dunkelmodus der Webseite, Farben aus dem DMS-Systemthema (siehe CSS .dark)
+dark = os.environ.get("DARK") == "1"  # Dunkelmodus der Webseite (CSS .dark, eigene Farben per THEME_CSS)
 
 
 def shown_date(today):
@@ -512,6 +514,14 @@ def state(today):
     return f"{view}|{weekend:d}|{offset}|{zeit}|{raster:d}|{dark:d}|{today}|{START}"
 
 
+def theme_css():
+    """Inhalt der Datei THEME_CSS, bei jedem Seitenaufruf frisch gelesen; ohne Datei bleibt das eingebaute CSS."""
+    try:
+        return open(THEME_CSS, encoding="utf-8").read() if THEME_CSS else ""
+    except OSError:
+        return ""
+
+
 def page(today):
     title, body = VIEWS[view][2](shown_date(today), today)
     nav = "".join(f'<a href="/view/{k}"{" class=on" if k == view else ""}>{label}</a>'
@@ -521,7 +531,7 @@ def page(today):
     nav += f'<a href="/dark">{"☑" if dark else "☐"} Dunkel</a>'
     return (f'<!doctype html><html lang="de"{" class=dark" * dark}><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>Kalender</title>'
-            f'<style>{CSS}</style></head><body>'
+            f'<style>{CSS}{theme_css()}</style></head><body>'
             f'<header><div class="titel"><a class="heute" href="/today">Heute</a>'  # links vom Titel, damit nichts springt
             f'<a class="arrow" href="/prev" aria-label="zurück">‹</a><a class="arrow" href="/next" aria-label="weiter">›</a>'
             f'<h1>{title}</h1></div><nav>{nav}<span>{stand()}</span></nav></header>{body}'
