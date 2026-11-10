@@ -637,6 +637,7 @@ main.raster{grid-template-columns:3.2em repeat(var(--n),minmax(0,1fr));grid-temp
 .hours{border-right:2px solid var(--line)}
 .hours div{height:calc(100% / 24);font-size:.75em;color:var(--faint);text-align:right;padding-right:.3em;transform:translateY(-.6em)}
 .col{position:relative;border-right:2px solid var(--line);background-image:linear-gradient(var(--grid) 1px,transparent 1px);background-size:100% calc(100% / 24)}
+.col::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(transparent 50%,var(--grid) 50% calc(50% + 1px),transparent 0) 0 0/100% calc(100% / 24);mask:repeating-linear-gradient(90deg,#000 0 4px,transparent 0 8px)}
 .blk{position:absolute;overflow:hidden;font-size:clamp(.6rem,1vw,.95rem);line-height:1.15;padding:0 .3em;background:var(--blk);border:1px solid var(--bg);border-left:3px solid var(--blk-edge);border-radius:3px}
 .blk.teams{background:var(--teams);border-left-color:var(--teams-edge)}
 .blk.urlaub{background:var(--urlaub);border-left-color:var(--urlaub-edge)}
