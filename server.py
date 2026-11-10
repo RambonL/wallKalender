@@ -45,9 +45,10 @@ ICS_NAMES = os.environ.get("ICS_NAMES", "").split()  # Namen im Menü „Kalende
 DEVICE_REFRESH_URL = os.environ.get("DEVICE_REFRESH_URL", "")
 THEME_CSS = os.environ.get("THEME_CSS", "")
 TERMINE = os.environ.get("TERMINE", "")
-# Regel: "4." jeden 4., "4.AT" 4. Arbeitstag, "25.12." jedes Jahr, "24.12.2026" (oder .26) einmal;
+# Regel: "4." jeden 4., "4.AT" 4. Arbeitstag, "-1." / "-1.AT" letzter (Arbeits-)Tag, "-2.AT" vorletzter,
+# "25.12." jedes Jahr, "24.12.2026" (oder .26) einmal;
 # dann optional "09:00" oder "09:00-09:30", optional eine Farbe "#e53935", dann der Titel
-REGEL = re.compile(r"(\d\d?\.(?:AT|\d\d?(?:\.(?:\d{4}|\d\d)?)?)?)\s+(?:(\d\d?):(\d\d)(?:-(\d\d?):(\d\d))?\s+)?"
+REGEL = re.compile(r"(-\d\d?\.(?:AT)?|\d\d?\.(?:AT|\d\d?(?:\.(?:\d{4}|\d\d)?)?)?)\s+(?:(\d\d?):(\d\d)(?:-(\d\d?):(\d\d))?\s+)?"
                    r"(?:(#[0-9a-f]{6})\s+)?(.+)", re.I)
 FARBEN = {"#4a90d9": "Blau", "#43a047": "Grün", "#f9a825": "Gelb", "#ef6c00": "Orange", "#e53935": "Rot", "#8e24aa": "Lila"}
 CACHE_SECONDS = 300
@@ -166,8 +167,8 @@ def termin_zeile(f):
         if art in ("einmal", "jahr"):
             d = date.fromisoformat(f.get("datum", ""))
             tag = f"{d.day}.{d.month}." + (str(d.year) if art == "einmal" else "")
-        elif art in ("monat", "at") and 0 < int(f.get("nr", "")) <= 31:
-            tag = f"{int(f['nr'])}." + "AT" * (art == "at")
+        elif art in ("monat", "at", "ende", "atende") and 0 < int(f.get("nr", "")) <= 31:  # ende: vom Monatsende
+            tag = "-" * art.endswith("ende") + f"{int(f['nr'])}." + "AT" * art.startswith("at")
         else:
             return None
         for t in (von, bis):
@@ -221,8 +222,10 @@ def regel_tage(tag, first, last):
     while date(y, mo, 1) <= last:
         tage = [date(y, mo, i) for i in range(1, calendar.monthrange(y, mo)[1] + 1)]
         tage = [d for d in tage if not frei(d)] if len(t) > 1 else tage  # "AT": nur Arbeitstage zählen
-        if 0 < n <= len(tage) and first <= tage[n - 1] <= last:
-            out.append(tage[n - 1])
+        if 0 < abs(n) <= len(tage):
+            d = tage[n - 1] if n > 0 else tage[n]  # negativ: vom Monatsende, -1 = letzter
+            if first <= d <= last:
+                out.append(d)
         y, mo = (y, mo + 1) if mo < 12 else (y + 1, 1)
     return out
 
@@ -616,7 +619,8 @@ if (art) {
     const datum = ["einmal", "jahr"].includes(art.value);
     tdlg.querySelector("[name=datum]").disabled = !datum;
     tdlg.querySelector("[name=nr]").disabled = datum;
-    tdlg.querySelector(".nr").firstChild.textContent = art.value === "at" ? "Arbeitstag im Monat (1 = erster)" : "Tag im Monat";
+    tdlg.querySelector(".nr").firstChild.textContent = {monat: "Tag im Monat", at: "Arbeitstag im Monat (1 = erster)",
+      ende: "Tag vor Monatsende (1 = letzter)", atende: "Arbeitstag vor Monatsende (1 = letzter)"}[art.value] || "";
   };
   art.onchange = pick;
   pick();
@@ -758,8 +762,11 @@ def page(today, kal=False):
 
 
 def regel_wann(tag):
-    """Tag einer Regel lesbar: "4." -> "jeden 4.", "4.AT" -> "jeden 4. AT", "25.12." -> "jährlich 25.12.", sonst Datum."""
+    """Tag einer Regel lesbar: "4." -> "jeden 4.", "4.AT" -> "jeden 4. AT", "-2.AT" -> "2.-letzter AT",
+    "25.12." -> "jährlich 25.12.", sonst das Datum."""
     t = [x for x in tag.upper().split(".") if x]
+    if t[0].startswith("-"):
+        return ("letzter" if t[0] == "-1" else f"{t[0][1:]}.-letzter") + (" AT" if len(t) > 1 else " Tag")
     if len(t) == 1:
         return f"jeden {t[0]}."
     if t[1] == "AT":
@@ -781,7 +788,9 @@ def termin_dialog():
             '<form method=post action=/termine class=neu>'
             '<label>Titel<input name=titel required placeholder="z. B. Reisekosten abrechnen"></label>'
             '<label>Wiederholung<select name=art><option value=einmal>einmalig</option><option value=jahr>jedes Jahr</option>'
-            '<option value=monat>jeden Monat am Tag …</option><option value=at>jeden Monat am Arbeitstag …</option></select></label>'
+            '<option value=monat>jeden Monat am Tag …</option><option value=at>jeden Monat am Arbeitstag …</option>'
+            '<option value=ende>jeden Monat am n. letzten Tag …</option>'
+            '<option value=atende>jeden Monat am n. letzten Arbeitstag …</option></select></label>'
             '<label>Datum<input type=date name=datum required></label>'
             '<label class=nr>Tag im Monat<input type=number name=nr min=1 max=31 required placeholder="4"></label>'
             '<div class=zeit><label>von<input type=time name=von></label><label>bis<input type=time name=bis></label></div>'
@@ -864,7 +873,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):  # Browser hat abgebrochen, z. B. Neuladen nach dem Vorab-Abruf
+            pass
 
     def log_message(self, fmt, *args):
         if not self.path.startswith(("/state", "/termin")):  # Webseite alle 3 s, Stream Deck alle 15 s: nicht ins Log

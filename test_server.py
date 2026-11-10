@@ -180,6 +180,12 @@ assert R("25.12.", date(2026, 11, 1), date(2027, 12, 31)) == R("25.12", date(202
 assert R("24.12.2026", date(2026, 1, 1), date(2027, 12, 31)) == R("24.12.26", date(2026, 1, 1), date(2027, 12, 31)) \
     == [date(2026, 12, 24)]                                                                     # einmal
 assert R("29.2.", date(2026, 1, 1), date(2028, 12, 31)) == [date(2028, 2, 29)]                # nur im Schaltjahr
+assert R("-1.AT", date(2026, 11, 1), date(2027, 1, 31)) == [date(2026, 11, 30), date(2026, 12, 31), date(2027, 1, 29)]
+assert R("-2.AT", date(2026, 12, 1), date(2026, 12, 31)) == [date(2026, 12, 30)]               # vorletzter Arbeitstag
+assert R("-1.", date(2027, 2, 1), date(2027, 2, 28)) == [date(2027, 2, 28)]                   # letzter Kalendertag
+assert not server.REGEL.fullmatch("-24.12. x") and server.REGEL.fullmatch("-1.at x")
+W = server.regel_wann
+assert (W("-1.AT"), W("-2.AT"), W("-1."), W("4.AT")) == ("letzter AT", "2.-letzter AT", "letzter Tag", "jeden 4. AT")
 assert not server.REGEL.fullmatch("25.122026 Quatsch") and not server.REGEL.fullmatch("Quatsch")
 with tempfile.NamedTemporaryFile("w", suffix=".txt") as f:
     f.write("# Kommentar\n4.AT 09:00 Reisekosten\n4. 10:00-10:45 Miete\n1.at Zeiterfassung\nQuatsch\n24.12.26 18:00 Bescherung\n")
@@ -198,6 +204,8 @@ with tempfile.NamedTemporaryFile("w", suffix=".txt") as f:
     assert Z({"art": "einmal", "datum": "2026-12-24", "von": "18:00", "bis": "19:00", "titel": "X"}) == "24.12.2026 18:00-19:00 X"
     assert Z({"art": "jahr", "datum": "2026-12-25", "titel": "Feier"}) == "25.12. Feier"
     assert Z({"art": "monat", "nr": "1", "titel": "Miete"}) == "1. Miete"
+    assert Z({"art": "atende", "nr": "1", "titel": "Abschluss"}) == "-1.AT Abschluss"
+    assert Z({"art": "ende", "nr": "2", "titel": "x"}) == "-2. x"
     assert Z({"art": "jahr", "datum": "2026-12-25", "von": "18:00", "farbe": "#e53935", "titel": "Feier"}) == "25.12. 18:00 #e53935 Feier"
     assert Z({"art": "monat", "nr": "1", "farbe": "#123456", "titel": "x"}) == "1. x"           # nur Farben aus FARBEN
     for bad in ({"art": "monat", "nr": "32", "titel": "x"}, {"art": "at", "nr": "4", "titel": " "},

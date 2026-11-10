@@ -126,10 +126,12 @@ every request, so changes show up without a restart.
 
 ```
 # "4." = every 4th, "4.AT" = 4th working day (Mon–Fri without public holidays, like "AT 4"),
+# "-1.AT" = last working day ("-2.AT" second to last, "-1." last day of the month),
 # "25.12." = every year, "24.12.2026" or "24.12.26" = once
 4.AT 09:00 Reisekosten abrechnen
 4. 10:00-10:30 Miete prüfen
 1.AT Zeiterfassung
+-1.AT 15:00 Monatsabschluss
 25.12. #e53935 Weihnachtsfeier
 24.12.2026 18:00 Bescherung
 ```
