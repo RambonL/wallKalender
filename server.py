@@ -9,16 +9,20 @@ GET|POST /prev /next   einen Monat bzw. eine Woche zurück/weiter; /today zurüc
 GET|POST /zeit         Uhrzeit der Termine als Start, von–bis oder Start mit Dauer
 GET|POST /raster       Woche als Outlook-Raster (Standard, Stunden senkrecht) oder als Liste
 GET|POST /dark         Dunkelmodus der Webseite an/aus (das E-Ink-Bild bleibt hell)
+GET /termin[/<n>]      nächster (n-ter) Termin mit Uhrzeit als kurzer Text, z. B. für eine Stream-Deck-Taste
 GET|POST /cal/<n>      Kalender n (1, 2, … wie in ICS_URLS) aus-/einblenden, auf der Webseite im Menü „Kalender“
 GET /state             Ansicht, Wochenende, Verschiebung, Zeitanzeige, Raster, Dunkel, aus-Kalender, Datum, Serverstart; fragt die Webseite alle 3 s ab
 
 Env: ICS_URLS (Leerzeichen-getrennt), ICS_NAMES (Namen im Menü, gleiche Reihenfolge), DEVICE_REFRESH_URL, TZ, PORT, DARK=1 (startet im Dunkelmodus),
-     THEME_CSS (eigene CSS-Datei, kommt nach dem eingebauten CSS, z. B. eigene Farben für .dark)
+     THEME_CSS (eigene CSS-Datei, kommt nach dem eingebauten CSS, z. B. eigene Farben für .dark),
+     TERMINE (Datei mit monatlichen Terminen, eine Regel pro Zeile, z. B. "4.AT 09:00 Reisekosten abrechnen")
 """
 import calendar
 import functools
 import io
 import os
+import re
+import textwrap
 import threading
 import time
 import urllib.request
@@ -38,6 +42,10 @@ ICS_URLS = [u.replace("webcal://", "https://", 1) for u in os.environ.get("ICS_U
 ICS_NAMES = os.environ.get("ICS_NAMES", "").split()  # Namen im Menü „Kalender“, gleiche Reihenfolge wie ICS_URLS
 DEVICE_REFRESH_URL = os.environ.get("DEVICE_REFRESH_URL", "")
 THEME_CSS = os.environ.get("THEME_CSS", "")
+TERMINE = os.environ.get("TERMINE", "")
+# Regel: "4." jeden 4., "4.AT" 4. Arbeitstag, "25.12." jedes Jahr, "24.12.2026" (oder .26) einmal;
+# dann optional "09:00" oder "09:00-09:30", dann der Titel
+REGEL = re.compile(r"(\d\d?\.(?:AT|\d\d?(?:\.(?:\d{4}|\d\d)?)?)?)\s+(?:(\d\d?):(\d\d)(?:-(\d\d?):(\d\d))?\s+)?(.+)", re.I)
 CACHE_SECONDS = 300
 MONATE = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli",
           "August", "September", "Oktober", "November", "Dezember"]
@@ -122,6 +130,47 @@ def occurrences(first, last):
             s, e = local(ev.start), local(ev.end)
             allday = not isinstance(s, datetime) or e - s >= timedelta(hours=24)  # mehrtägig mit Uhrzeit (Urlaub aus Outlook) wie ganztägig
             yield s, e, allday, str(ev.get("SUMMARY", "")).strip(), name
+    for m in regeln():
+        tag, h1, m1, h2, m2, title = m.groups()
+        for d in regel_tage(tag, first, last):
+            if h1 is None:  # ohne Uhrzeit: ganztägig
+                yield d, d + timedelta(days=1), True, title, ""
+            else:
+                s = datetime(d.year, d.month, d.day, int(h1), int(m1), tzinfo=TZ)
+                e = s.replace(hour=int(h2), minute=int(m2)) if h2 else s + timedelta(minutes=30)
+                yield s, e, False, title, ""
+
+
+def regeln():
+    """Passende Zeilen der Datei TERMINE, bei jedem Abruf frisch gelesen; # am Zeilenanfang und Unpassendes fällt weg."""
+    try:
+        lines = open(TERMINE, encoding="utf-8").read().splitlines() if TERMINE else []
+    except OSError:
+        return []
+    return [m for line in lines if not line.lstrip().startswith("#") and (m := REGEL.fullmatch(line.strip()))]
+
+
+def regel_tage(tag, first, last):
+    """Tage der Regel tag ("4.", "4.AT", "25.12.", "24.12.2026") zwischen first und last; fehlt der Tag, fällt er aus."""
+    t = [x for x in tag.upper().split(".") if x]
+    n = int(t[0])
+    if len(t) > 1 and t[1] != "AT":  # Datum: mit Jahr einmal, sonst jedes Jahr
+        out = []
+        for y in [int(t[2]) + 2000 * (len(t[2]) == 2)] if len(t) == 3 else range(first.year, last.year + 1):
+            try:
+                out.append(date(y, int(t[1]), n))
+            except ValueError:  # 29.2. außerhalb von Schaltjahren, 31.4.
+                pass
+        return [d for d in out if first <= d <= last]
+    out = []
+    y, mo = first.year, first.month
+    while date(y, mo, 1) <= last:
+        tage = [date(y, mo, i) for i in range(1, calendar.monthrange(y, mo)[1] + 1)]
+        tage = [d for d in tage if not frei(d)] if len(t) > 1 else tage  # "AT": nur Arbeitstage zählen
+        if 0 < n <= len(tage) and first <= tage[n - 1] <= last:
+            out.append(tage[n - 1])
+        y, mo = (y, mo + 1) if mo < 12 else (y + 1, 1)
+    return out
 
 
 def events(first, last):
@@ -139,6 +188,17 @@ def events(first, last):
     for items in days.values():
         items.sort()
     return days
+
+
+def next_text(now, n=1):
+    """n-ter nächster Termin mit Uhrzeit (läuft gerade oder kommt in 7 Tagen) in drei kurzen Zeilen für eine 72-px-Taste."""
+    evs = sorted((s, e, t) for s, e, allday, t, _ in occurrences(now.date(), now.date() + timedelta(days=7))
+                 if not allday and e > now)
+    if not 0 < n <= len(evs):
+        return "keine\nTermine" if n == 1 else ""  # weitere Tasten bleiben leer
+    s, e, t = evs[n - 1]
+    when = f"bis {e:%H:%M}" if s <= now else f"{s:%H:%M}" if s.date() == now.date() else f"{TAGE[s.weekday()]} {s:%H:%M}"
+    return "\n".join([when] + textwrap.wrap(t, 10, max_lines=2, placeholder="…"))
 
 
 def blocks(days):
@@ -606,6 +666,8 @@ class Handler(BaseHTTPRequestHandler):
         today = datetime.now(TZ).date()
         if path == "":
             self.reply(page(today, "kal" in self.path).encode(), "text/html; charset=utf-8")
+        elif path.split("/")[0] == "termin" and (path[7:] or "1").isdigit():  # nicht /next, das blättert weiter
+            self.reply(next_text(datetime.now(TZ), int(path[7:] or 1)).encode(), "text/plain; charset=utf-8")
         elif path == "state":
             self.reply(state(today).encode(), "text/plain")
         elif path == "image.png":
@@ -650,7 +712,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, fmt, *args):
-        if not self.path.startswith("/state"):  # die Webseite fragt alle 3 s, das muss nicht ins Log
+        if not self.path.startswith(("/state", "/termin")):  # Webseite alle 3 s, Stream Deck alle 15 s: nicht ins Log
             super().log_message(fmt, *args)
 
 

@@ -171,6 +171,30 @@ with tempfile.NamedTemporaryFile("w", suffix=".css") as f:
 assert "#123456" not in server.page(today)  # Datei weg
 server.THEME_CSS = ""
 
+# TERMINE: monatliche Regeln, n-ter Tag oder n-ter Arbeitstag (Feiertage zählen nicht)
+R = server.regel_tage
+assert R("1.AT", date(2027, 1, 1), date(2027, 1, 31)) == [date(2027, 1, 4)]                  # 1.1. Neujahr
+assert R("31.", date(2026, 11, 1), date(2027, 1, 31)) == [date(2026, 12, 31), date(2027, 1, 31)]
+assert R("25.12.", date(2026, 11, 1), date(2027, 12, 31)) == R("25.12", date(2026, 11, 1), date(2027, 12, 31)) \
+    == [date(2026, 12, 25), date(2027, 12, 25)]                                                 # jährlich
+assert R("24.12.2026", date(2026, 1, 1), date(2027, 12, 31)) == R("24.12.26", date(2026, 1, 1), date(2027, 12, 31)) \
+    == [date(2026, 12, 24)]                                                                     # einmal
+assert R("29.2.", date(2026, 1, 1), date(2028, 12, 31)) == [date(2028, 2, 29)]                # nur im Schaltjahr
+assert not server.REGEL.fullmatch("25.122026 Quatsch") and not server.REGEL.fullmatch("Quatsch")
+with tempfile.NamedTemporaryFile("w", suffix=".txt") as f:
+    f.write("# Kommentar\n4.AT 09:00 Reisekosten\n4. 10:00-10:45 Miete\n1.at Zeiterfassung\nQuatsch\n24.12.26 18:00 Bescherung\n")
+    f.flush()
+    server.TERMINE = f.name
+    evs = server.events(date(2026, 11, 1), date(2026, 11, 30))
+    assert (True, "09:00", "Reisekosten", "") in evs[date(2026, 11, 5)]                    # AT 4 = Do 5.11.
+    assert (True, "10:00", "Miete", "") in evs[date(2026, 11, 4)]
+    assert (False, "", "Zeiterfassung", "") in evs[date(2026, 11, 2)]                       # ganztägig, AT 1
+    assert (True, "18:00", "Bescherung", "") in server.events(date(2026, 12, 1), date(2026, 12, 31))[date(2026, 12, 24)]
+    assert sum(t in ("Reisekosten", "Miete", "Zeiterfassung") for i in evs.values() for *_, t, _ in i) == 3
+    assert any(t == "Miete" and (a, b) == (600, 645) for a, b, _, t, _ in server.blocks([date(2026, 11, 4)])[date(2026, 11, 4)])
+server.TERMINE = ""
+assert not any(t == "Miete" for i in server.events(date(2026, 11, 1), date(2026, 11, 30)).values() for *_, t, _ in i)
+
 # Teams: trotz 10er-Grenze pro Antwort kommen alle Termine an, und die ICS-Datei landet richtig im Kalender
 import teams_ics  # noqa: E402
 
@@ -219,4 +243,11 @@ evs = server.events(date(2026, 11, 1), date(2026, 11, 30))
 assert evs[date(2026, 11, 9)] and not any(n == "Teams" for items in evs.values() for *_, n in items)
 html = server.page(today, kal=True)
 assert "<details open><summary class=aus>Kalender<" in html and "☐ Teams" in html and "|1|2026-11-05|" in html
+
+# /next: nächster Termin mit Uhrzeit, laufender als "bis", ganztägige zählen nicht
+at = lambda d, h, m: server.datetime(2026, 11, d, h, m, tzinfo=server.TZ)
+assert server.next_text(at(9, 9, 0)) == "09:30\nDaily\nStandup", server.next_text(at(9, 9, 0))
+assert server.next_text(at(9, 9, 40)) == "bis 09:45\nDaily\nStandup"
+assert server.next_text(at(9, 9, 0), 2) == "Di 09:30\nDaily\nStandup"                         # anderer Tag mit Wochentag
+assert server.next_text(at(9, 9, 0), 99) == ""                                                # mehr Tasten als Termine: leer
 print("ok")

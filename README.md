@@ -74,7 +74,20 @@ Settings apply to all browsers at once and are kept in memory only.
 | `/raster` | week as time grid or list |
 | `/zeit` | event time: start → start–end → duration |
 | `/dark` | dark mode on/off (the PNG stays light) |
+| `/termin`, `/termin/2`, … | next (second, …) event with a time as three short lines, e.g. for a Stream Deck key (see below) |
 | `/cal/1`, `/cal/2`, … | hide/show a calendar, numbered in `ICS_URLS` order (menu "Kalender" from two calendars on) |
+
+### Next event on a Stream Deck key
+
+`/termin` returns the next event that has a time (running now or within 7 days) as three short lines that fit
+a 72 px key, e.g. `09:30` / `Daily` / `Standup`, or `bis 09:45` while it is running. All-day events and hidden
+calendars are skipped. `/termin/2`, `/termin/3`, … return the following events, empty if there are none.
+
+With [StreamController](https://github.com/StreamController/StreamController) use the action "Run Command":
+
+- command `curl -sf http://host:8080/termin`
+- "Display output" on, "Auto run" e.g. 15 seconds, "Detached" off (otherwise the output is dropped)
+- leave the key's own label text empty, it would cover the output
 
 ## Settings (`.env`)
 
@@ -87,6 +100,7 @@ Settings apply to all browsers at once and are kept in memory only.
 | `DEVICE_REFRESH_URL` | receives a POST on every view change so the display refreshes right away |
 | `DARK` | `1` starts in dark mode |
 | `THEME_CSS` | path to your own CSS file, added after the built-in styles (see below) |
+| `TERMINE` | path to a file with monthly, yearly and single events (see below) |
 | `TEAMS_MQTT`, `TEAMS_ICS`, `TEAMS_TOPIC` | only for `teams_ics.py`, see below |
 
 Public holidays are defined at the top of `server.py` (`FEIERTAGE_FEST`, `FEIERTAGE_OSTERN`). For another region,
@@ -102,6 +116,25 @@ The file is read on every page load, so edits show up after a reload. Light mode
 ```
 
 All variables are listed at the top of `CSS` in `server.py`.
+
+## Monthly events
+
+Events that repeat every month or year, or single dates, go into a text file, one rule per line.
+Set `TERMINE` to its path (Docker: put it into `./data/` and use `/data/termine.txt`). The file is read again on
+every request, so changes show up without a restart.
+
+```
+# "4." = every 4th, "4.AT" = 4th working day (Mon–Fri without public holidays, like "AT 4"),
+# "25.12." = every year, "24.12.2026" or "24.12.26" = once
+4.AT 09:00 Reisekosten abrechnen
+4. 10:00-10:30 Miete prüfen
+1.AT Zeiterfassung
+25.12. Weihnachtsfeier
+24.12.2026 18:00 Bescherung
+```
+
+Without an end time an event lasts 30 minutes, without a time it is all-day. If the day doesn't exist in a month
+(the 31st in April, the 29th of February), the event is skipped. Lines that don't match are ignored.
 
 ## Google Calendar
 
