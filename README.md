@@ -130,12 +130,16 @@ every request, so changes show up without a restart.
 4.AT 09:00 Reisekosten abrechnen
 4. 10:00-10:30 Miete prüfen
 1.AT Zeiterfassung
-25.12. Weihnachtsfeier
+25.12. #e53935 Weihnachtsfeier
 24.12.2026 18:00 Bescherung
 ```
 
-Without an end time an event lasts 30 minutes, without a time it is all-day. If the day doesn't exist in a month
+Without an end time an event lasts 30 minutes, without a time it is all-day. A color like `#e53935` before the
+title tints the event on the web page (the e-ink PNG stays gray). If the day doesn't exist in a month
 (the 31st in April, the 29th of February), the event is skipped. Lines that don't match are ignored.
+
+With `TERMINE` set, "+ Termin" in the menu opens a form to add a rule and lists the existing ones with ✕ to delete.
+The server rewrites the file then, so in Docker `./data` must be writable (no `:ro`).
 
 ## Google Calendar
 

@@ -10,6 +10,7 @@ GET|POST /zeit         Uhrzeit der Termine als Start, von–bis oder Start mit D
 GET|POST /raster       Woche als Outlook-Raster (Standard, Stunden senkrecht) oder als Liste
 GET|POST /dark         Dunkelmodus der Webseite an/aus (das E-Ink-Bild bleibt hell)
 GET /termin[/<n>]      nächster (n-ter) Termin mit Uhrzeit als kurzer Text, z. B. für eine Stream-Deck-Taste
+POST /termine          Termin aus dem Formular „+ Termin“ an die Datei TERMINE anhängen; /termine/weg löscht eine Zeile
 GET|POST /cal/<n>      Kalender n (1, 2, … wie in ICS_URLS) aus-/einblenden, auf der Webseite im Menü „Kalender“
 GET /state             Ansicht, Wochenende, Verschiebung, Zeitanzeige, Raster, Dunkel, aus-Kalender, Datum, Serverstart; fragt die Webseite alle 3 s ab
 
@@ -26,6 +27,7 @@ import textwrap
 import threading
 import time
 import urllib.request
+from urllib.parse import parse_qs
 from datetime import date, datetime, timedelta
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -44,8 +46,10 @@ DEVICE_REFRESH_URL = os.environ.get("DEVICE_REFRESH_URL", "")
 THEME_CSS = os.environ.get("THEME_CSS", "")
 TERMINE = os.environ.get("TERMINE", "")
 # Regel: "4." jeden 4., "4.AT" 4. Arbeitstag, "25.12." jedes Jahr, "24.12.2026" (oder .26) einmal;
-# dann optional "09:00" oder "09:00-09:30", dann der Titel
-REGEL = re.compile(r"(\d\d?\.(?:AT|\d\d?(?:\.(?:\d{4}|\d\d)?)?)?)\s+(?:(\d\d?):(\d\d)(?:-(\d\d?):(\d\d))?\s+)?(.+)", re.I)
+# dann optional "09:00" oder "09:00-09:30", optional eine Farbe "#e53935", dann der Titel
+REGEL = re.compile(r"(\d\d?\.(?:AT|\d\d?(?:\.(?:\d{4}|\d\d)?)?)?)\s+(?:(\d\d?):(\d\d)(?:-(\d\d?):(\d\d))?\s+)?"
+                   r"(?:(#[0-9a-f]{6})\s+)?(.+)", re.I)
+FARBEN = {"#4a90d9": "Blau", "#43a047": "Grün", "#f9a825": "Gelb", "#ef6c00": "Orange", "#e53935": "Rot", "#8e24aa": "Lila"}
 CACHE_SECONDS = 300
 MONATE = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli",
           "August", "September", "Oktober", "November", "Dezember"]
@@ -131,14 +135,18 @@ def occurrences(first, last):
             allday = not isinstance(s, datetime) or e - s >= timedelta(hours=24)  # mehrtägig mit Uhrzeit (Urlaub aus Outlook) wie ganztägig
             yield s, e, allday, str(ev.get("SUMMARY", "")).strip(), name
     for m in regeln():
-        tag, h1, m1, h2, m2, title = m.groups()
+        tag, h1, m1, h2, m2, farbe, title = m.groups()
+        farbe = (farbe or "").lower()  # steht statt des Kalendernamens; "#…" färbt den Termin auf der Webseite
         for d in regel_tage(tag, first, last):
             if h1 is None:  # ohne Uhrzeit: ganztägig
-                yield d, d + timedelta(days=1), True, title, ""
+                yield d, d + timedelta(days=1), True, title, farbe
             else:
-                s = datetime(d.year, d.month, d.day, int(h1), int(m1), tzinfo=TZ)
-                e = s.replace(hour=int(h2), minute=int(m2)) if h2 else s + timedelta(minutes=30)
-                yield s, e, False, title, ""
+                try:
+                    s = datetime(d.year, d.month, d.day, int(h1), int(m1), tzinfo=TZ)
+                    e = s.replace(hour=int(h2), minute=int(m2)) if h2 else s + timedelta(minutes=30)
+                except ValueError:  # z. B. 25:00 von Hand eingetragen
+                    continue
+                yield s, e, False, title, farbe
 
 
 def regeln():
@@ -148,6 +156,52 @@ def regeln():
     except OSError:
         return []
     return [m for line in lines if not line.lstrip().startswith("#") and (m := REGEL.fullmatch(line.strip()))]
+
+
+def termin_zeile(f):
+    """Felder aus dem Formular -> Regelzeile wie in der Datei TERMINE, None wenn etwas fehlt oder nicht passt."""
+    art, titel, von, bis = f.get("art"), " ".join(f.get("titel", "").split()), f.get("von", ""), f.get("bis", "")
+    farbe = f.get("farbe", "") if f.get("farbe") in FARBEN else ""
+    try:  # split: Titel ohne Zeilenumbrüche, sonst ließen sich weitere Zeilen einschleusen
+        if art in ("einmal", "jahr"):
+            d = date.fromisoformat(f.get("datum", ""))
+            tag = f"{d.day}.{d.month}." + (str(d.year) if art == "einmal" else "")
+        elif art in ("monat", "at") and 0 < int(f.get("nr", "")) <= 31:
+            tag = f"{int(f['nr'])}." + "AT" * (art == "at")
+        else:
+            return None
+        for t in (von, bis):
+            if t:
+                datetime.strptime(t, "%H:%M")  # wirft bei 25:00
+    except ValueError:
+        return None
+    line = " ".join(x for x in (tag, f"{von}-{bis}" if von and bis else von, farbe, titel) if x)
+    return line if titel and REGEL.fullmatch(line) else None
+
+
+def termine_schreiben(neu=None, weg=None):
+    """Zeile neu anhängen bzw. die erste Zeile weg löschen; Kommentare bleiben, Datei wird ganz ersetzt (nie halb)."""
+    with _lock:
+        try:
+            lines = open(TERMINE, encoding="utf-8").read().splitlines()
+        except FileNotFoundError:
+            lines = []
+        i = next((j for j, y in enumerate(lines) if y.strip() == weg), None)
+        if i is not None:
+            del lines[i]
+        if neu:
+            lines.append(neu)
+        with open(TERMINE + ".tmp", "w", encoding="utf-8") as f:
+            f.write("".join(x + "\n" for x in lines))
+        os.replace(TERMINE + ".tmp", TERMINE)
+
+
+def termine_stand():
+    """Änderungszeit der Datei TERMINE für /state, damit alle Anzeigen nach dem Speichern neu laden."""
+    try:
+        return os.stat(TERMINE).st_mtime_ns
+    except OSError:
+        return 0
 
 
 def regel_tage(tag, first, last):
@@ -438,6 +492,36 @@ nav a.on{color:var(--fg);font-weight:700;text-decoration:none}
 nav details{position:relative}
 nav summary{cursor:pointer;font-size:1.15em}
 nav summary.aus{color:var(--red)}  /* ein Kalender ist ausgeblendet; nur Farbe, damit die Leiste nicht springt */
+/* Dialog „+ Termin“ */
+dialog{margin:auto;width:min(26em,calc(100vw - 2em));padding:1.2em 1.4em;background:var(--bg);color:var(--fg);
+  border:1px solid var(--line);border-radius:.8em;box-shadow:0 1em 3em #0006}
+dialog::backdrop{background:#0008;backdrop-filter:blur(2px)}
+dialog,dialog ul{scrollbar-width:thin;scrollbar-color:var(--faint) transparent}
+dialog h3{font-size:1.25em;margin-bottom:.8em}
+dialog form.neu{display:grid;gap:.75em}
+dialog label{display:grid;gap:.25em;font-size:.85em;color:var(--muted)}dialog label:has(:disabled){display:none}
+dialog input,dialog select{font:inherit;font-size:1rem;color:var(--fg);background:var(--we);border:1px solid var(--line);
+  border-radius:.4em;padding:.45em .6em;width:100%}
+dialog input:focus,dialog select:focus{outline:2px solid var(--teams-edge);outline-offset:-1px}
+dialog .zeit{display:grid;grid-template-columns:1fr 1fr;gap:.75em}
+dialog small{color:var(--faint);font-size:.8em;margin-top:-.35em}
+dialog .primary{font:inherit;font-weight:700;padding:.55em;border:0;border-radius:.4em;background:var(--teams-edge);color:var(--bg);cursor:pointer}
+dialog .x{position:absolute;top:.7em;right:.8em}
+dialog .x button,dialog .weg{font:inherit;background:none;border:0;color:var(--faint);cursor:pointer;font-size:1.1em}
+dialog .x button:hover,dialog .weg:hover{color:var(--red)}
+dialog h4{margin:1.3em 0 .3em;font-size:.75em;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+dialog ul{list-style:none;padding:0;max-height:35vh;overflow-y:auto}
+dialog li{display:flex;align-items:baseline;gap:.7em;padding:.4em 0;border-top:1px solid var(--line)}
+dialog .farben{border:0;padding:0;display:flex;flex-wrap:wrap;gap:.5em}
+dialog .farben legend{font-size:.85em;color:var(--muted);margin-bottom:.3em;width:100%}
+dialog .farben label{display:block}dialog .farben input{position:absolute;opacity:0;width:auto}
+dialog .farben i{display:block;width:1.7em;height:1.7em;border-radius:50%;background:var(--c,transparent);
+  border:2px dashed var(--faint);cursor:pointer}dialog .farben i[style]{border:2px solid transparent}
+dialog .farben input:checked+i{outline:2px solid var(--fg);outline-offset:2px}
+dialog .farben input:focus-visible+i{outline:2px solid var(--teams-edge);outline-offset:2px}
+dialog .punkt{display:inline-block;width:.7em;height:.7em;border-radius:50%;background:var(--c);margin-right:.4em}
+dialog .wann{font-size:.8em;color:var(--muted);min-width:7.5em}dialog .was{flex:1}dialog li form{display:contents}
+.dark{color-scheme:dark}
 nav details>div{position:absolute;left:0;z-index:9;display:flex;flex-direction:column;gap:.3em;margin-top:.3em;padding:.5em .8em;
   background:var(--bg);border:2px solid var(--faint);border-radius:.4em}
 main{flex:1;min-height:0;display:grid;grid-template-columns:repeat(var(--n,7),minmax(0,1fr));border-top:2px solid var(--line)}
@@ -476,6 +560,8 @@ main.raster{grid-template-columns:3.2em repeat(var(--n),minmax(0,1fr));grid-temp
 .blk{position:absolute;overflow:hidden;font-size:clamp(.6rem,1vw,.95rem);line-height:1.15;padding:0 .3em;background:var(--blk);border:1px solid var(--bg);border-left:3px solid var(--blk-edge);border-radius:3px}
 .blk.teams{background:var(--teams);border-left-color:var(--teams-edge)}
 .blk.urlaub{background:var(--urlaub);border-left-color:var(--urlaub-edge)}
+/* Termine aus TERMINE mit Farbe (--c): getönt, im Raster mit farbigem Rand */
+.ev[data-farbe],.blk[data-farbe]{background:color-mix(in srgb,var(--c) 35%,var(--bg))}.blk[data-farbe]{border-left-color:var(--c)}
 .now{position:absolute;left:0;right:0;border-top:2px solid var(--red);z-index:1}
 .now::before{content:"";position:absolute;left:-5px;top:-6px;width:10px;height:10px;border-radius:50%;background:var(--red)}
 .kurz,.agenda{display:none}
@@ -486,7 +572,7 @@ main.raster{grid-template-columns:3.2em repeat(var(--n),minmax(0,1fr));grid-temp
   /* Handy-Monat: kompaktes Raster mit Strichen je Termin, darunter die angetippte Woche als Liste (JS baut .agenda) */
   .month{flex:none;grid-template-rows:auto!important}.month .at,.month .kwm{display:none}.month .num{display:grid}.month .day{padding-bottom:.2em;font-size:0}
   .month .ev{display:inline-block;width:.8rem;height:.3rem;margin:.1rem;padding:0;font-size:0;background:var(--muted)}
-  .month .ev.teams{background:var(--teams-edge)}.month .ev.urlaub{background:var(--urlaub-edge)}
+  .month .ev.teams{background:var(--teams-edge)}.month .ev.urlaub{background:var(--urlaub-edge)}.month .ev[data-farbe]{background:var(--c)}
   .month .day:not(.sel){opacity:.45}
   .agenda{display:block;flex:1;min-height:0;overflow-y:auto;scrollbar-width:none;padding:0 .6em .6em}
   .agenda h3{font-size:1rem;margin:.7em 0 .2em;border-bottom:1px solid var(--line)}.agenda h3.today{color:var(--red)}.agenda h3.kw{border:0;color:var(--muted)}
@@ -524,6 +610,18 @@ if (m) {
   cells.forEach((c, i) => c.addEventListener("click", () => show(Math.floor(i / n))));
   show(Math.max(0, Math.floor(cells.findIndex(c => c.classList.contains("today")) / n)));
 }
+const art = document.querySelector("[name=art]");  // Formular „+ Termin“: Datum oder n, das andere aus
+if (art) {
+  const pick = () => {
+    const datum = ["einmal", "jahr"].includes(art.value);
+    tdlg.querySelector("[name=datum]").disabled = !datum;
+    tdlg.querySelector("[name=nr]").disabled = datum;
+    tdlg.querySelector(".nr").firstChild.textContent = art.value === "at" ? "Arbeitstag im Monat (1 = erster)" : "Tag im Monat";
+  };
+  art.onchange = pick;
+  pick();
+  if (location.search === "?termine") tdlg.showModal();
+}
 if (location.search) history.replaceState(null, "", "/");  // /?kal hält das Kalender-Menü nur nach dem Klick offen
 const loaded = Date.now();
 setInterval(async () => {
@@ -544,8 +642,13 @@ def html_items(items):
     out = ""
     for timed, t, title, cal in items:
         cls = ["ev"] + ["allday"] * (not timed) + ["teams"] * (cal == "Teams") + ["urlaub"] * urlaub(title)
-        out += f'<div class="{" ".join(cls)}">{f"<b>{t}</b> " if t else ""}{escape(title)}</div>'
+        out += f'<div class="{" ".join(cls)}"{farbe_style(cal)}>{f"<b>{t}</b> " if t else ""}{escape(title)}</div>'
     return out
+
+
+def farbe_style(cal):
+    """Termin aus TERMINE mit Farbe: Klasse und --c für das CSS; cal ist dann "#rrggbb" statt eines Kalendernamens."""
+    return f' data-farbe style="--c:{cal}"' if cal.startswith("#") else ""
 
 
 def day_class(day, today, c, n, items, other=False):
@@ -586,7 +689,8 @@ def html_week(shown, today):
     grid = ""
     for c, day in enumerate(days):
         inner = "".join(
-            f'<div class="{" ".join(["blk"] + ["teams"] * (cal == "Teams") + ["urlaub"] * urlaub(t2))}" style="top:{a / 14.4:.3f}%;'
+            f'<div class="{" ".join(["blk"] + ["teams"] * (cal == "Teams") + ["urlaub"] * urlaub(t2))}"{" data-farbe" * cal.startswith("#")}'
+            f' style="{f"--c:{cal};" * cal.startswith("#")}top:{a / 14.4:.3f}%;'
             f'height:{(b - a) / 14.4:.3f}%;left:{100 * k / m:.3f}%;width:{100 / m:.3f}%">{f"<b>{t}</b> " if t else ""}{escape(t2)}</div>'
             for (a, b, t, t2, cal), k, m in columns(bl.get(day, [])))  # 14.4 = 1440 min / 100 %
         if day == today:
@@ -618,7 +722,8 @@ def shown_date(today):
 
 
 def state(today):
-    return f"{view}|{weekend:d}|{offset}|{zeit}|{raster:d}|{dark:d}|{','.join(map(str, sorted(hidden)))}|{today}|{START}"
+    return (f"{view}|{weekend:d}|{offset}|{zeit}|{raster:d}|{dark:d}|{','.join(map(str, sorted(hidden)))}|{termine_stand()}"
+            f"|{today}|{START}")
 
 
 def theme_css():
@@ -641,13 +746,51 @@ def page(today, kal=False):
         nav += (f'<details{" open" * kal}><summary{" class=aus" * bool(hidden)}>Kalender</summary>'
                 f'<div>{links}</div></details>')
     nav += f'<a href="/dark">{"☑" if dark else "☐"} Dunkel</a>'
+    nav += '<a href="#" onclick="tdlg.showModal();return false">+ Termin</a>' * bool(TERMINE)
     return (f'<!doctype html><html lang="de"{" class=dark" * dark}><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>Kalender</title>'
             f'<style>{CSS}{theme_css()}</style></head><body>'
             f'<header><div class="titel"><a class="heute" href="/today">Heute</a>'  # links vom Titel, damit nichts springt
             f'<a class="arrow" href="/prev" aria-label="zurück">‹</a><a class="arrow" href="/next" aria-label="weiter">›</a>'
             f'<h1>{title}</h1></div><nav>{nav}<span{" class=stand" * (not _failed)}>{stand()}</span></nav></header>{body}'
+            f'{termin_dialog() if TERMINE else ""}'
             f'<script>const state = "{state(today)}";{JS}</script></body></html>')
+
+
+def regel_wann(tag):
+    """Tag einer Regel lesbar: "4." -> "jeden 4.", "4.AT" -> "jeden 4. AT", "25.12." -> "jährlich 25.12.", sonst Datum."""
+    t = [x for x in tag.upper().split(".") if x]
+    if len(t) == 1:
+        return f"jeden {t[0]}."
+    if t[1] == "AT":
+        return f"jeden {t[0]}. AT"
+    return f"jährlich {t[0]}.{t[1]}." if len(t) == 2 else f"{t[0]}.{t[1]}.{t[2] if len(t[2]) == 4 else '20' + t[2]}"
+
+
+def termin_dialog():
+    """Formular „+ Termin“ und die gespeicherten Regeln mit ✕ zum Löschen."""
+    liste = ""
+    for m in regeln():
+        tag, h1, m1, h2, m2, farbe, title = m.groups()
+        zeit = f"<b>{h1}:{m1}{f'–{h2}:{m2}' if h2 else ''}</b> " if h1 else ""
+        punkt = f'<i class=punkt style="--c:{farbe}"></i>' if farbe else ""
+        liste += (f'<li><span class=wann>{regel_wann(tag)}</span><span class=was>{punkt}{zeit}{escape(title)}</span>'
+                  f'<form method=post action=/termine/weg onsubmit="return confirm(\'Termin löschen?\')">'
+                  f'<input type=hidden name=zeile value="{escape(m.string)}"><button class=weg aria-label=löschen>✕</button></form></li>')
+    return ('<dialog id=tdlg><form method=dialog class=x><button aria-label=Schließen>✕</button></form><h3>Neuer Termin</h3>'
+            '<form method=post action=/termine class=neu>'
+            '<label>Titel<input name=titel required placeholder="z. B. Reisekosten abrechnen"></label>'
+            '<label>Wiederholung<select name=art><option value=einmal>einmalig</option><option value=jahr>jedes Jahr</option>'
+            '<option value=monat>jeden Monat am Tag …</option><option value=at>jeden Monat am Arbeitstag …</option></select></label>'
+            '<label>Datum<input type=date name=datum required></label>'
+            '<label class=nr>Tag im Monat<input type=number name=nr min=1 max=31 required placeholder="4"></label>'
+            '<div class=zeit><label>von<input type=time name=von></label><label>bis<input type=time name=bis></label></div>'
+            '<small>Ohne Uhrzeit ganztägig, ohne „bis“ 30 Minuten.</small>'
+            '<fieldset class=farben><legend>Farbe</legend><label title=keine><input type=radio name=farbe value="" checked><i></i></label>'
+            + "".join(f'<label title={n}><input type=radio name=farbe value="{c}"><i style="--c:{c}"></i></label>'
+                      for c, n in FARBEN.items()) + '</fieldset>'
+            '<button class=primary>Speichern</button></form>'
+            + (f'<h4>Gespeichert</h4><ul>{liste}</ul>' if liste else "") + '</dialog>')
 
 
 # ---------- HTTP ----------
@@ -664,7 +807,19 @@ class Handler(BaseHTTPRequestHandler):
         global view, weekend, offset, zeit, raster, dark, hidden
         path = self.path.split("?")[0].strip("/")
         today = datetime.now(TZ).date()
-        if path == "":
+        if self.command == "POST" and TERMINE and path in ("termine", "termine/weg"):
+            f = {k: v[0] for k, v in parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()).items()}
+            neu = termin_zeile(f) if path == "termine" else None
+            if path == "termine" and not neu:
+                return self.send_error(400, "Termin unvollständig")
+            termine_schreiben(neu, f.get("zeile") if path == "termine/weg" else None)
+            if DEVICE_REFRESH_URL:
+                threading.Thread(target=poke_device, daemon=True).start()
+            self.send_response(303)
+            self.send_header("Location", "/?termine")  # Dialog bleibt offen, die Liste zeigt das Ergebnis
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        elif path == "":
             self.reply(page(today, "kal" in self.path).encode(), "text/html; charset=utf-8")
         elif path.split("/")[0] == "termin" and (path[7:] or "1").isdigit():  # nicht /next, das blättert weiter
             self.reply(next_text(datetime.now(TZ), int(path[7:] or 1)).encode(), "text/plain; charset=utf-8")

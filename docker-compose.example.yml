@@ -7,7 +7,7 @@ services:
     ports:
       - "${PORT:-8080}:8080"
     volumes:
-      - ./data:/data:ro   # teams.ics, theme.css
+      - ./data:/data   # teams.ics, theme.css, termine.txt (the form writes it)
     restart: unless-stopped
 
   # optional: docker compose --profile teams up -d

@@ -118,7 +118,7 @@ for (name, we), n in cells.items():
     assert html.count('class="day') == n, (name, we)
     assert 'class="day today"' in html and ">AT 4<" in html and ('data-d="Do 5.11."' in html) == (name == "month")                                 # Do 5.11. eingekreist, AT 4
     assert "Tom &amp; Jerry &lt;Party&gt;" in html and "<Party>" not in html                 # Titel escaped
-    assert f'const state = "{name}|{we:d}|0|start|1|0||2026-11-05|{server.START}"' in html  # Raster ist Standard, hell
+    assert f'const state = "{name}|{we:d}|0|start|1|0||0|2026-11-05|{server.START}"' in html  # Raster ist Standard, hell
     if len(sys.argv) > 1:
         out = f"{sys.argv[1]}/{name}{'' if we else '-mofr'}"
         img.save(f"{out}.png")
@@ -192,7 +192,30 @@ with tempfile.NamedTemporaryFile("w", suffix=".txt") as f:
     assert (True, "18:00", "Bescherung", "") in server.events(date(2026, 12, 1), date(2026, 12, 31))[date(2026, 12, 24)]
     assert sum(t in ("Reisekosten", "Miete", "Zeiterfassung") for i in evs.values() for *_, t, _ in i) == 3
     assert any(t == "Miete" and (a, b) == (600, 645) for a, b, _, t, _ in server.blocks([date(2026, 11, 4)])[date(2026, 11, 4)])
+    # Formular „+ Termin“: Felder -> Regelzeile, anhängen und löschen, Kommentar bleibt
+    Z = server.termin_zeile
+    assert Z({"art": "at", "nr": "4", "von": "09:00", "titel": " Reise\nkosten "}) == "4.AT 09:00 Reise kosten"
+    assert Z({"art": "einmal", "datum": "2026-12-24", "von": "18:00", "bis": "19:00", "titel": "X"}) == "24.12.2026 18:00-19:00 X"
+    assert Z({"art": "jahr", "datum": "2026-12-25", "titel": "Feier"}) == "25.12. Feier"
+    assert Z({"art": "monat", "nr": "1", "titel": "Miete"}) == "1. Miete"
+    assert Z({"art": "jahr", "datum": "2026-12-25", "von": "18:00", "farbe": "#e53935", "titel": "Feier"}) == "25.12. 18:00 #e53935 Feier"
+    assert Z({"art": "monat", "nr": "1", "farbe": "#123456", "titel": "x"}) == "1. x"           # nur Farben aus FARBEN
+    for bad in ({"art": "monat", "nr": "32", "titel": "x"}, {"art": "at", "nr": "4", "titel": " "},
+                {"art": "einmal", "datum": "", "titel": "x"}, {"art": "at", "nr": "4", "von": "25:00", "titel": "x"}, {}):
+        assert Z(bad) is None, bad
+    server.termine_schreiben("1. Neu")
+    server.termine_schreiben(weg="4. 10:00-10:45 Miete")
+    text = open(f.name, encoding="utf-8").read()
+    assert text.startswith("# Kommentar\n") and text.endswith("1. Neu\n") and "Miete" not in text, text
+    html = server.page(today)
+    assert "<dialog id=tdlg>" in html and 'value="1. Neu"' in html and ">+ Termin</a>" in html
+    # Farbe: läuft statt des Kalendernamens mit und färbt den Termin auf der Webseite
+    server.termine_schreiben("5. 08:00 #43A047 Gießen")
+    assert (True, "08:00", "Gießen", "#43a047") in server.events(date(2026, 11, 5), date(2026, 11, 5))[date(2026, 11, 5)]
+    assert '<div class="ev" data-farbe style="--c:#43a047"><b>08:00</b> Gießen</div>' in server.page(today)
+    assert server.REGEL.fullmatch("1. #Hashtag Titel")[7] == "#Hashtag Titel"                  # kein Farbcode: Teil vom Titel
 server.TERMINE = ""
+assert ">+ Termin</a>" not in server.page(today) and "<dialog" not in server.page(today)
 assert not any(t == "Miete" for i in server.events(date(2026, 11, 1), date(2026, 11, 30)).values() for *_, t, _ in i)
 
 # Teams: trotz 10er-Grenze pro Antwort kommen alle Termine an, und die ICS-Datei landet richtig im Kalender
@@ -242,7 +265,7 @@ server.hidden = {1}
 evs = server.events(date(2026, 11, 1), date(2026, 11, 30))
 assert evs[date(2026, 11, 9)] and not any(n == "Teams" for items in evs.values() for *_, n in items)
 html = server.page(today, kal=True)
-assert "<details open><summary class=aus>Kalender<" in html and "☐ Teams" in html and "|1|2026-11-05|" in html
+assert "<details open><summary class=aus>Kalender<" in html and "☐ Teams" in html and "|1|0|2026-11-05|" in html
 
 # /next: nächster Termin mit Uhrzeit, laufender als "bis", ganztägige zählen nicht
 at = lambda d, h, m: server.datetime(2026, 11, d, h, m, tzinfo=server.TZ)
