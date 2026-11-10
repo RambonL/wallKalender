@@ -120,7 +120,8 @@ All variables are listed at the top of `CSS` in `server.py`.
 ## Monthly events
 
 Events that repeat every month or year, or single dates, go into a text file, one rule per line.
-Set `TERMINE` to its path (Docker: put it into `./data/` and use `/data/termine.txt`). The file is read again on
+Copy `termine.example.txt` to `termine.txt` and set `TERMINE` to its path (Docker: put it into `./data/` and
+use `/data/termine.txt`). The file is read again on
 every request, so changes show up without a restart.
 
 ```

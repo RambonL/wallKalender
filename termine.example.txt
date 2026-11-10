@@ -1,0 +1,13 @@
+# Copy to termine.txt (Docker: data/termine.txt) and set TERMINE to its path. One rule per line, # = comment.
+#
+# Day:  4.          every month on the 4th
+#       4.AT        every month on the 4th working day (Mon–Fri without public holidays, like "AT 4")
+#       25.12.      every year on 25 December
+#       24.12.2026  once (24.12.26 works too)
+# Then optional time "09:00" (30 min) or "09:00-09:45"; without a time the event is all-day. Then the title.
+
+4.AT 09:00 Reisekosten abrechnen
+1. 10:00-10:30 Miete prüfen
+10.AT Zeiterfassung
+25.12. Weihnachtsfeier
+24.12.2026 18:00 Bescherung
