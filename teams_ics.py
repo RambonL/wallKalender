@@ -6,7 +6,8 @@ aktuellen Ordner): aktueller und nächster Monat frisch,
 dazu 2 Monate zurück bis 6 Monate voraus, die nur einmal pro Stunde neu geholt werden (ändern sich selten).
 Der Kalender-Server liest die Datei wie jeden anderen Kalender: ICS_URLS="file:///<pfad>/teams.ics ..."
 Antwortet Teams nicht (PC aus, Teams zu), bleibt die alte Datei stehen.
-In die Datei kommen nur Titel und Zeiten, keine Beschreibungen oder Teilnehmer.
+In die Datei kommen Titel, Zeiten, Ort und Beschreibung als reiner Text: ohne Links, ohne Einwahlblock
+(Teams-Link, Meeting-ID, Kennwort), ohne Teilnehmer.
 
 Voraussetzung in der config.json von teams-for-linux: "graphApi": {"enabled": true} und mqtt.commandTopic "command".
 Env: TEAMS_MQTT=mqtt://benutzer:passwort@host:1883 (Sonderzeichen im Passwort %-kodiert), TEAMS_ICS (Standard teams.ics),
@@ -24,6 +25,8 @@ from zoneinfo import ZoneInfo
 
 import icalendar
 import paho.mqtt.client as mqtt
+
+from server import klartext
 
 TZ = ZoneInfo(os.environ.get("TZ", "Europe/Berlin"))
 UTC = timezone.utc
@@ -85,6 +88,11 @@ def to_ics(events):
         ev = icalendar.Event()
         ev.add("uid", e["id"])
         ev.add("summary", e.get("subject") or "")
+        ort = klartext((e.get("location") or {}).get("displayName"))
+        if ort and not ort.lower().startswith("microsoft teams"):  # "Microsoft Teams Meeting" sagt nichts
+            ev.add("location", ort)
+        if text := klartext((e.get("body") or {}).get("content") or e.get("bodyPreview")):  # ganzer Text, Vorschau nur 255 Zeichen
+            ev.add("description", text)
         for key in ("start", "end"):
             t = utc(e[key])
             ev.add(f"dt{key}", t.date() if e["isAllDay"] else t)

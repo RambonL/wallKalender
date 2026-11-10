@@ -21,6 +21,7 @@ Env: ICS_URLS (Leerzeichen-getrennt), ICS_NAMES (Namen im Menü, gleiche Reihenf
 import calendar
 import functools
 import io
+import json
 import os
 import re
 import textwrap
@@ -29,7 +30,7 @@ import time
 import urllib.request
 from urllib.parse import parse_qs
 from datetime import date, datetime, timedelta
-from html import escape
+from html import escape, unescape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from zoneinfo import ZoneInfo
 
@@ -125,6 +126,50 @@ def zeit_text(s, e):
     return f"{s:%H:%M}"
 
 
+class Titel(str):
+    """Titel eines Termins, der fürs Popup Zeit, Ort und Beschreibung mitträgt; überall sonst ein normaler str
+    (Vergleiche, Sortieren, Tests). So bleiben die Termin-Tupel in events() und blocks() unverändert."""
+    zeit = ort = text = regel = ""  # regel: Zeile aus TERMINE, dann lässt sich der Termin im Popup bearbeiten
+
+
+def titel(t, s, e, allday, ort="", text=""):
+    x = Titel(t)
+    x.zeit, x.ort, x.text = popup_zeit(s, e, allday), klartext(ort), klartext(text)
+    return x
+
+
+def popup_zeit(s, e, allday):
+    """Wann der Termin ist, fürs Popup: "Mo 9.11.2026, 10:00–11:00", ganztägig "Mo 9.11.2026" oder "Mo 9.11. – Fr 13.11.2026"."""
+    tag = lambda d: f"{TAGE[d.weekday()]} {d.day}.{d.month}."
+    if allday:
+        a = s.date() if isinstance(s, datetime) else s
+        b = (e - timedelta(microseconds=1)).date() if isinstance(e, datetime) else e - timedelta(days=1)
+        return f"{tag(a)}{b.year}" if a == b else f"{tag(a)} – {tag(b)}{b.year}"
+    if (e - timedelta(microseconds=1)).date() == s.date():  # endet am selben Tag oder um Mitternacht
+        return f"{tag(s)}{s.year}, {s:%H:%M}–{e:%H:%M}"
+    return f"{tag(s)} {s:%H:%M} – {tag(e)}{e.year} {e:%H:%M}"
+
+
+def klartext(text):
+    """Beschreibung als reiner Text: ohne HTML, Links und Mailadressen, ohne Einwahlblock (Teams/Outlook ab einer Linie ____).
+    HTML-Absätze werden Zeilen; höchstens 2000 Zeichen."""
+    text = re.sub(r"(?is)<(head|style|script)\b.*?</\1>|<!--.*?-->", " ", str(text or ""))
+    text = re.sub(r"(?i)<br\s*/?>|</(?:p|div|li|tr|h\d)>", "\n", text)
+    text = unescape(re.sub(r"<[^>]+>", " ", text))
+    text = re.split(r"_{8,}|^\s*(?:Microsoft Teams[- ](?:meeting|Besprechung)|Meeting[- ]ID:|Besprechungs-ID:|Passcode:|Kennung:)",
+                    text, maxsplit=1, flags=re.I | re.M)[0]  # Einwahlblock auch ohne Linie
+    text = re.sub(r"<?(?:https?://|www\.)\S+", "", text)
+    text = re.sub(r"<?(?:mailto:)?[\w.+-]+@[\w-]+(?:\.[\w-]+)+>?", "", text)  # z. B. "Von: Name <name@firma.de>"
+    text = "\n".join(" ".join(line.split()) for line in text.splitlines())  # split: auch &nbsp;
+    return re.sub(r"\n{3,}", "\n\n", text).strip()[:2000]
+
+
+def regel_teile(rest):
+    """Titel | Ort | Beschreibung aus einer Regel; Ort und Beschreibung dürfen fehlen."""
+    t, ort, text = (rest.split("|", 2) + ["", ""])[:3]
+    return t.strip(), ort.strip(), text.strip()
+
+
 def occurrences(first, last):
     """(Start, Ende, ganztägig, Titel, Kalendername) aller nicht abgesagten Termine, die first..last berühren."""
     for c in calendars():
@@ -134,20 +179,26 @@ def occurrences(first, last):
                 continue
             s, e = local(ev.start), local(ev.end)
             allday = not isinstance(s, datetime) or e - s >= timedelta(hours=24)  # mehrtägig mit Uhrzeit (Urlaub aus Outlook) wie ganztägig
-            yield s, e, allday, str(ev.get("SUMMARY", "")).strip(), name
+            yield s, e, allday, titel(str(ev.get("SUMMARY", "")).strip(), s, e, allday,
+                                      ev.get("LOCATION", ""), ev.get("DESCRIPTION", "")), name
     for m in regeln():
-        tag, h1, m1, h2, m2, farbe, title = m.groups()
+        tag, h1, m1, h2, m2, farbe, rest = m.groups()
+        title, ort, text = regel_teile(rest)
         farbe = (farbe or "").lower()  # steht statt des Kalendernamens; "#…" färbt den Termin auf der Webseite
         for d in regel_tage(tag, first, last):
             if h1 is None:  # ohne Uhrzeit: ganztägig
-                yield d, d + timedelta(days=1), True, title, farbe
+                x = titel(title, d, d + timedelta(days=1), True, ort, text)
+                x.regel = m.string
+                yield d, d + timedelta(days=1), True, x, farbe
             else:
                 try:
                     s = datetime(d.year, d.month, d.day, int(h1), int(m1), tzinfo=TZ)
                     e = s.replace(hour=int(h2), minute=int(m2)) if h2 else s + timedelta(minutes=30)
                 except ValueError:  # z. B. 25:00 von Hand eingetragen
                     continue
-                yield s, e, False, title, farbe
+                x = titel(title, s, e, False, ort, text)
+                x.regel = m.string
+                yield s, e, False, x, farbe
 
 
 def regeln():
@@ -163,6 +214,7 @@ def termin_zeile(f):
     """Felder aus dem Formular -> Regelzeile wie in der Datei TERMINE, None wenn etwas fehlt oder nicht passt."""
     art, titel, von, bis = f.get("art"), " ".join(f.get("titel", "").split()), f.get("von", ""), f.get("bis", "")
     farbe = f.get("farbe", "") if f.get("farbe") in FARBEN else ""
+    titel, ort, text = (" ".join(f.get(k, "").replace("|", "/").split()) for k in ("titel", "ort", "text"))  # eine Zeile
     try:  # split: Titel ohne Zeilenumbrüche, sonst ließen sich weitere Zeilen einschleusen
         if art in ("einmal", "jahr"):
             d = date.fromisoformat(f.get("datum", ""))
@@ -176,22 +228,42 @@ def termin_zeile(f):
                 datetime.strptime(t, "%H:%M")  # wirft bei 25:00
     except ValueError:
         return None
-    line = " ".join(x for x in (tag, f"{von}-{bis}" if von and bis else von, farbe, titel) if x)
+    rest = titel + (f" | {ort}" if ort or text else "") + (f" | {text}" if text else "")
+    line = " ".join(x for x in (tag, f"{von}-{bis}" if von and bis else von, farbe, rest) if x)
     return line if titel and REGEL.fullmatch(line) else None
 
 
+def regel_form(line):
+    """Formularfelder einer Regelzeile zum Bearbeiten, Gegenstück zu termin_zeile()."""
+    tag, h1, m1, h2, m2, farbe, rest = REGEL.fullmatch(line).groups()
+    titel, ort, text = regel_teile(rest)
+    f = {"titel": titel, "ort": ort, "text": text, "farbe": (farbe or "").lower(),
+         "von": f"{int(h1):02d}:{m1}" if h1 else "", "bis": f"{int(h2):02d}:{m2}" if h2 else ""}
+    t = [x for x in tag.upper().split(".") if x]
+    n = int(t[0])
+    if len(t) > 1 and t[1] != "AT":  # Datum; jährlich: im Datumsfeld steht dieses Jahr
+        y = int(t[2]) + 2000 * (len(t[2]) == 2) if len(t) == 3 else date.today().year
+        f.update(art="einmal" if len(t) == 3 else "jahr", datum=f"{y:04d}-{int(t[1]):02d}-{n:02d}")
+    else:
+        f.update(art=("at" if len(t) > 1 else "monat") if n > 0 else ("atende" if len(t) > 1 else "ende"), nr=str(abs(n)))
+    return f
+
+
 def termine_schreiben(neu=None, weg=None):
-    """Zeile neu anhängen bzw. die erste Zeile weg löschen; Kommentare bleiben, Datei wird ganz ersetzt (nie halb)."""
+    """Zeile weg durch neu ersetzen (bearbeiten), löschen (nur weg) oder neu anhängen (nur neu).
+    Kommentare bleiben; die Datei wird ganz ersetzt, nie halb geschrieben."""
     with _lock:
         try:
             lines = open(TERMINE, encoding="utf-8").read().splitlines()
         except FileNotFoundError:
             lines = []
-        i = next((j for j, y in enumerate(lines) if y.strip() == weg), None)
-        if i is not None:
+        i = next((j for j, y in enumerate(lines) if y.strip() == weg), None) if weg else None
+        if i is not None and neu:
+            lines[i] = neu  # bearbeitet: bleibt an seiner Stelle
+        elif i is not None:
             del lines[i]
-        if neu:
-            lines.append(neu)
+        elif neu:
+            lines.append(neu)  # neu, oder die alte Zeile ist inzwischen weg
         with open(TERMINE + ".tmp", "w", encoding="utf-8") as f:
             f.write("".join(x + "\n" for x in lines))
         os.replace(TERMINE + ".tmp", TERMINE)
@@ -525,6 +597,11 @@ dialog .farben input:focus-visible+i{outline:2px solid var(--teams-edge);outline
 dialog .punkt{display:inline-block;width:.7em;height:.7em;border-radius:50%;background:var(--c);margin-right:.4em}
 dialog .wann{font-size:.8em;color:var(--muted);min-width:7.5em}dialog .was{flex:1}dialog li form{display:contents}
 .dark{color-scheme:dark}
+[data-zeit]{cursor:pointer}
+#edlg{width:min(44em,calc(100vw - 2em))}#edlg h3{margin-right:1.5em}#edlg p{margin-top:.5em}#edlg .e-edit{margin-top:1em;width:100%}#edlg p:empty{display:none}#edlg .e-zeit{color:var(--muted)}
+#edlg .e-ort::before{content:"Ort: ";color:var(--muted)}#edlg .e-text{white-space:pre-line;max-height:65vh;overflow-y:auto}
+dialog textarea{font:inherit;font-size:1rem;color:var(--fg);background:var(--we);border:1px solid var(--line);border-radius:.4em;
+  padding:.45em .6em;width:100%;resize:vertical}
 nav details>div{position:absolute;left:0;z-index:9;display:flex;flex-direction:column;gap:.3em;margin-top:.3em;padding:.5em .8em;
   background:var(--bg);border:2px solid var(--faint);border-radius:.4em}
 main{flex:1;min-height:0;display:grid;grid-template-columns:repeat(var(--n,7),minmax(0,1fr));border-top:2px solid var(--line)}
@@ -624,9 +701,29 @@ if (art) {
   };
   art.onchange = pick;
   pick();
+  const form = tdlg.querySelector("form.neu");
+  const open = (felder, regel) => {  // leer: neuer Termin; sonst bearbeiten, Speichern ersetzt die Zeile regel
+    form.reset();
+    for (const [k, v] of Object.entries(felder)) if (form.elements[k]) form.elements[k].value = v;
+    form.elements.alt.value = regel;
+    tdlg.querySelector("h3").textContent = regel ? "Termin bearbeiten" : "Neuer Termin";
+    pick();
+    tdlg.showModal();
+  };
+  window.neuTermin = () => open({}, "");
+  edlg.querySelector(".e-edit").onclick = () => { edlg.close(); open(JSON.parse(edlg.dataset.form), edlg.dataset.regel); };
   if (location.search === "?termine") tdlg.showModal();
 }
 if (location.search) history.replaceState(null, "", "/");  // /?kal hält das Kalender-Menü nur nach dem Klick offen
+document.addEventListener("click", e => {  // Termin angeklickt: Popup mit Zeit, Ort, Beschreibung
+  const ev = e.target.closest("[data-zeit]");
+  if (!ev || (ev.closest(".month") && matchMedia("(max-width:700px)").matches)) return;  // Handy-Monat: Tippen wählt die Woche
+  for (const k of ["titel", "zeit", "ort", "text"]) edlg.querySelector(".e-" + k).textContent = ev.dataset[k] || "";
+  edlg.querySelector(".e-edit").hidden = !ev.dataset.form;  // nur eigene Termine aus „+ Termin“
+  edlg.dataset.form = ev.dataset.form || "";
+  edlg.dataset.regel = ev.dataset.regel || "";
+  edlg.showModal();
+});
 const loaded = Date.now();
 setInterval(async () => {
   try {
@@ -646,8 +743,17 @@ def html_items(items):
     out = ""
     for timed, t, title, cal in items:
         cls = ["ev"] + ["allday"] * (not timed) + ["teams"] * (cal == "Teams") + ["urlaub"] * urlaub(title)
-        out += f'<div class="{" ".join(cls)}"{farbe_style(cal)}>{f"<b>{t}</b> " if t else ""}{escape(title)}</div>'
+        out += f'<div class="{" ".join(cls)}"{farbe_style(cal)}{popup_attr(title)}>{f"<b>{t}</b> " if t else ""}{escape(title)}</div>'
     return out
+
+
+def popup_attr(t):
+    """data-Attribute fürs Termin-Popup; das JS liest sie beim Klick."""
+    if not isinstance(t, Titel):
+        return ""
+    form = json.dumps(regel_form(t.regel), ensure_ascii=False) if t.regel else ""
+    return "".join(f' data-{k}="{escape(v)}"' for k, v in (("titel", t), ("zeit", t.zeit), ("ort", t.ort), ("text", t.text),
+                                                           ("regel", t.regel), ("form", form)) if v)
 
 
 def farbe_style(cal):
@@ -693,7 +799,7 @@ def html_week(shown, today):
     grid = ""
     for c, day in enumerate(days):
         inner = "".join(
-            f'<div class="{" ".join(["blk"] + ["teams"] * (cal == "Teams") + ["urlaub"] * urlaub(t2))}"{" data-farbe" * cal.startswith("#")}'
+            f'<div class="{" ".join(["blk"] + ["teams"] * (cal == "Teams") + ["urlaub"] * urlaub(t2))}"{" data-farbe" * cal.startswith("#")}{popup_attr(t2)}'
             f' style="{f"--c:{cal};" * cal.startswith("#")}top:{a / 14.4:.3f}%;'
             f'height:{(b - a) / 14.4:.3f}%;left:{100 * k / m:.3f}%;width:{100 / m:.3f}%">{f"<b>{t}</b> " if t else ""}{escape(t2)}</div>'
             for (a, b, t, t2, cal), k, m in columns(bl.get(day, [])))  # 14.4 = 1440 min / 100 %
@@ -750,7 +856,7 @@ def page(today, kal=False):
         nav += (f'<details{" open" * kal}><summary{" class=aus" * bool(hidden)}>Kalender</summary>'
                 f'<div>{links}</div></details>')
     nav += f'<a href="/dark">{"☑" if dark else "☐"} Dunkel</a>'
-    nav += '<a href="#" onclick="tdlg.showModal();return false">+ Termin</a>' * bool(TERMINE)
+    nav += '<a href="#" onclick="neuTermin();return false">+ Termin</a>' * bool(TERMINE)
     return (f'<!doctype html><html lang="de"{" class=dark" * dark}><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>Kalender</title>'
             f'<style>{CSS}{theme_css()}</style></head><body>'
@@ -758,6 +864,9 @@ def page(today, kal=False):
             f'<a class="arrow" href="/prev" aria-label="zurück">‹</a><a class="arrow" href="/next" aria-label="weiter">›</a>'
             f'<h1>{title}</h1></div><nav>{nav}<span{" class=stand" * (not _failed)}>{stand()}</span></nav></header>{body}'
             f'{termin_dialog() if TERMINE else ""}'
+            '<dialog id=edlg><form method=dialog class=x><button aria-label=Schließen>✕</button></form>'
+            '<h3 class=e-titel></h3><p class=e-zeit></p><p class=e-ort></p><p class=e-text></p>'
+            '<button type=button class="primary e-edit" hidden>Bearbeiten</button></dialog>'
             f'<script>const state = "{state(today)}";{JS}</script></body></html>')
 
 
@@ -778,14 +887,16 @@ def termin_dialog():
     """Formular „+ Termin“ und die gespeicherten Regeln mit ✕ zum Löschen."""
     liste = ""
     for m in regeln():
-        tag, h1, m1, h2, m2, farbe, title = m.groups()
+        tag, h1, m1, h2, m2, farbe, rest = m.groups()
+        title, ort, _ = regel_teile(rest)
+        title += f" · {ort}" * bool(ort)
         zeit = f"<b>{h1}:{m1}{f'–{h2}:{m2}' if h2 else ''}</b> " if h1 else ""
         punkt = f'<i class=punkt style="--c:{farbe}"></i>' if farbe else ""
         liste += (f'<li><span class=wann>{regel_wann(tag)}</span><span class=was>{punkt}{zeit}{escape(title)}</span>'
                   f'<form method=post action=/termine/weg onsubmit="return confirm(\'Termin löschen?\')">'
                   f'<input type=hidden name=zeile value="{escape(m.string)}"><button class=weg aria-label=löschen>✕</button></form></li>')
     return ('<dialog id=tdlg><form method=dialog class=x><button aria-label=Schließen>✕</button></form><h3>Neuer Termin</h3>'
-            '<form method=post action=/termine class=neu>'
+            '<form method=post action=/termine class=neu><input type=hidden name=alt>'
             '<label>Titel<input name=titel required placeholder="z. B. Reisekosten abrechnen"></label>'
             '<label>Wiederholung<select name=art><option value=einmal>einmalig</option><option value=jahr>jedes Jahr</option>'
             '<option value=monat>jeden Monat am Tag …</option><option value=at>jeden Monat am Arbeitstag …</option>'
@@ -795,6 +906,8 @@ def termin_dialog():
             '<label class=nr>Tag im Monat<input type=number name=nr min=1 max=31 required placeholder="4"></label>'
             '<div class=zeit><label>von<input type=time name=von></label><label>bis<input type=time name=bis></label></div>'
             '<small>Ohne Uhrzeit ganztägig, ohne „bis“ 30 Minuten.</small>'
+            '<label>Ort<input name=ort placeholder="optional"></label>'
+            '<label>Beschreibung<textarea name=text rows=2 placeholder="optional"></textarea></label>'
             '<fieldset class=farben><legend>Farbe</legend><label title=keine><input type=radio name=farbe value="" checked><i></i></label>'
             + "".join(f'<label title={n}><input type=radio name=farbe value="{c}"><i style="--c:{c}"></i></label>'
                       for c, n in FARBEN.items()) + '</fieldset>'
@@ -821,7 +934,7 @@ class Handler(BaseHTTPRequestHandler):
             neu = termin_zeile(f) if path == "termine" else None
             if path == "termine" and not neu:
                 return self.send_error(400, "Termin unvollständig")
-            termine_schreiben(neu, f.get("zeile") if path == "termine/weg" else None)
+            termine_schreiben(neu, f.get("zeile") if path == "termine/weg" else f.get("alt"))  # alt: bearbeitete Zeile
             if DEVICE_REFRESH_URL:
                 threading.Thread(target=poke_device, daemon=True).start()
             self.send_response(303)

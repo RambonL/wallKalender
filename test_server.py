@@ -81,7 +81,23 @@ assert not any(t == "Bis Mitternacht" for _, _, t, _ in evs.get(date(2026, 11, 7
 assert evs[date(2026, 11, 18)][0][0] is False                                               # ganztägig zuerst
 for day in (13, 14, 15, 16):                                                                # ≥24 h wie ganztägig, ohne Uhrzeit
     assert (False, "", "Rufbereitschaft", "") in evs[date(2026, 11, day)]
-assert '<div class="ev allday urlaub">Urlaub</div>' in server.html_items(evs[date(2026, 11, 18)])  # Urlaub pink
+assert ('<div class="ev allday urlaub" data-titel="Urlaub" data-zeit="Mi 18.11. – Fr 20.11.2026">Urlaub</div>'
+        in server.html_items(evs[date(2026, 11, 18)]))                                         # Urlaub pink, Popup-Daten
+assert 'data-zeit="Mi 18.11.2026, 09:30–09:45"' in server.html_items(evs[date(2026, 11, 18)])
+
+# Popup: Zeittext, Beschreibung ohne HTML, Links und Teams-Einwahlblock
+P, at0 = server.popup_zeit, lambda d, h, m=0: server.datetime(2026, 11, d, h, m, tzinfo=server.TZ)
+assert P(at0(6, 23), at0(7, 0), False) == "Fr 6.11.2026, 23:00–00:00"                       # bis Mitternacht
+assert P(at0(13, 8), at0(16, 8), True) == "Fr 13.11. – Mo 16.11.2026"                        # ≥24 h mit Uhrzeit
+assert P(at0(6, 22), at0(7, 2), False) == "Fr 6.11. 22:00 – Sa 7.11.2026 02:00"
+assert server.klartext("Agenda <b>Q4</b> &amp; Ziele\r\nhttps://x.de/a?b=1\n\n\n\nPunkt 2\n"
+                       "________________\nMicrosoft Teams Meeting-ID: 123 https://teams.microsoft.com/l/x") == "Agenda Q4 & Ziele\n\nPunkt 2"
+assert server.klartext(None) == "" and server.klartext("www.x.de") == ""
+assert server.klartext("Von: Max Muster <max.muster@firma.de>; An: a.b@c.co.uk") == "Von: Max Muster ; An:"
+assert server.klartext("Info.\n\nMicrosoft Teams meeting\n\nJoin:\nMeeting ID:\n123 456\nPasscode:\nab1") == "Info."  # ohne ____
+assert server.klartext('<html><head><style>p{margin:0}</style></head><body><p>Hallo&nbsp;Andrea,</p><p></p><p>Lange Agenda'
+                       '<br>Punkt 2</p><div>________________</div><p><a href="https://t.ms/x">Join</a></p></body></html>') \
+    == "Hallo Andrea,\n\nLange Agenda\nPunkt 2"                                               # Outlook-HTML
 assert "feiertag" in server.day_class(date(2026, 11, 1), date(2026, 11, 5), 6, 7, [])              # Allerheiligen pink
 assert "feiertag" not in server.day_class(date(2026, 11, 7), date(2026, 11, 5), 5, 7, [])
 assert "urlaubstag" in server.day_class(date(2026, 11, 18), date(2026, 11, 5), 2, 7, evs[date(2026, 11, 18)])  # ganze Zelle
@@ -220,10 +236,29 @@ with tempfile.NamedTemporaryFile("w", suffix=".txt") as f:
     # Farbe: läuft statt des Kalendernamens mit und färbt den Termin auf der Webseite
     server.termine_schreiben("5. 08:00 #43A047 Gießen")
     assert (True, "08:00", "Gießen", "#43a047") in server.events(date(2026, 11, 5), date(2026, 11, 5))[date(2026, 11, 5)]
-    assert '<div class="ev" data-farbe style="--c:#43a047"><b>08:00</b> Gießen</div>' in server.page(today)
+    assert ('<div class="ev" data-farbe style="--c:#43a047" data-titel="Gießen" data-zeit="Do 5.11.2026, 08:00–08:30" '
+            'data-regel="5. 08:00 #43A047 Gießen" data-form=') in server.page(today)
+    # Ort und Beschreibung: in der Datei hinter "|", im Formular eigene Felder (eine Zeile, | wird /)
+    assert Z({"art": "monat", "nr": "2", "titel": "A|B", "ort": "Büro", "text": "Belege\nmitnehmen"}) == "2. A/B | Büro | Belege mitnehmen"
+    assert Z({"art": "monat", "nr": "2", "titel": "A", "text": "nur Text"}) == "2. A |  | nur Text"
+    server.termine_schreiben("2. 07:00 Bäcker | Ecke | Brötchen holen")
+    t = next(t for i in server.events(date(2026, 11, 2), date(2026, 11, 2)).values() for *_, t, _ in i if t == "Bäcker")
+    assert (t.ort, t.text, t.zeit) == ("Ecke", "Brötchen holen", "Mo 2.11.2026, 07:00–07:30")
+    assert 'data-ort="Ecke" data-text="Brötchen holen"' in server.page(today) and "<dialog id=edlg>" in server.page(today)
+    # Bearbeiten: Regel -> Formularfelder -> wieder dieselbe Regel; Speichern ersetzt die Zeile an ihrer Stelle
+    for line in ("4.AT 09:00 #4a90d9 Reisekosten", "1. 10:00-10:30 Miete | Online-Banking", "-2.AT 7:05 Ende |  | Text",
+                 "-1. X", "25.12. #e53935 Feier", "24.12.2026 18:00 Bescherung"):
+        assert Z(server.regel_form(line)) == line.replace("7:05", "07:05"), (line, server.regel_form(line))
+    assert server.regel_form("24.12.26 X")["datum"] == "2026-12-24" and server.regel_form("25.12 X")["art"] == "jahr"
+    before = open(f.name, encoding="utf-8").read().splitlines()
+    server.termine_schreiben("2. 08:00 Bäcker | Ecke", weg="2. 07:00 Bäcker | Ecke | Brötchen holen")
+    after = open(f.name, encoding="utf-8").read().splitlines()
+    assert len(after) == len(before) and after[before.index("2. 07:00 Bäcker | Ecke | Brötchen holen")] == "2. 08:00 Bäcker | Ecke"
+    html = server.page(today)
+    assert 'data-regel="2. 08:00 Bäcker | Ecke" data-form="{&quot;titel&quot;: &quot;Bäcker&quot;' in html
     assert server.REGEL.fullmatch("1. #Hashtag Titel")[7] == "#Hashtag Titel"                  # kein Farbcode: Teil vom Titel
 server.TERMINE = ""
-assert ">+ Termin</a>" not in server.page(today) and "<dialog" not in server.page(today)
+assert ">+ Termin</a>" not in server.page(today) and "<dialog id=tdlg" not in server.page(today)
 assert not any(t == "Miete" for i in server.events(date(2026, 11, 1), date(2026, 11, 30)).values() for *_, t, _ in i)
 
 # Teams: trotz 10er-Grenze pro Antwort kommen alle Termine an, und die ICS-Datei landet richtig im Kalender
@@ -255,12 +290,20 @@ assert (ws.isoformat(), wend.isoformat()) == ("2026-08-31T22:00:00+00:00", "2027
 gone = g("Gelöscht", "2026-11-10T08:00:00", "2026-11-10T09:00:00")  # im stündlichen Abruf, inzwischen in Teams gelöscht
 far = g("Weit", "2027-03-01T08:00:00", "2027-03-01T09:00:00")
 assert {x["id"] for x in teams_ics.merge(got, [gone, far], start, end)} == {x["id"] for x in G} | {"Weit"}
+x = icalendar.Calendar.from_ical(teams_ics.to_ics([dict(g("D", "2026-11-09T09:00:00", "2026-11-09T10:00:00"),
+    location={"displayName": "Raum 1"}, bodyPreview="gekürzt",
+    body={"contentType": "html", "content": "<p>Agenda https://x.de</p><div>____________</div><p>Microsoft Teams Join: https://t.ms/1</p>"})]))
+ev = next(iter(x.walk("VEVENT")))
+assert (str(ev["LOCATION"]), str(ev["DESCRIPTION"])) == ("Raum 1", "Agenda")                  # ohne Link, ohne Einwahl
+ev = next(iter(icalendar.Calendar.from_ical(teams_ics.to_ics([dict(g("E", "2026-11-09T09:00:00", "2026-11-09T10:00:00"),
+    location={"displayName": "Microsoft Teams Meeting"}, bodyPreview="________________ Join")])).walk("VEVENT")))
+assert "LOCATION" not in ev and "DESCRIPTION" not in ev
 server._cals = {"teams": icalendar.Calendar.from_ical(teams_ics.to_ics(got))}
 evs = server.events(date(2026, 11, 1), date(2026, 11, 30))
 assert (True, "10:00", "T9", "Teams") in evs[date(2026, 11, 9)]                            # 09:00 UTC = 10:00 Winterzeit
 assert all((False, "", "Messe", "Teams") in evs[date(2026, 11, d)] for d in (23, 24, 25))
-assert '<div class="ev teams">' in server.html_items(evs[date(2026, 11, 9)])                # Teams blau
-assert '<div class="ev allday teams">' in server.html_items(evs[date(2026, 11, 23)])
+assert '<div class="ev teams" ' in server.html_items(evs[date(2026, 11, 9)])               # Teams blau
+assert '<div class="ev allday teams" ' in server.html_items(evs[date(2026, 11, 23)])
 assert not any(t == "Messe" for _, _, t, _ in evs.get(date(2026, 11, 26), []))
 assert not any(t == "Abgesagt" for items in evs.values() for _, _, t, _ in items)
 

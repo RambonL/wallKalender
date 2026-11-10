@@ -9,6 +9,7 @@ as a web page and as a grayscale PNG (1872×1404) for an e-ink display.
 - Vacation and holidays highlighted pink, Teams meetings blue, all-day events gray
 - Event time as start, start–end, or start with duration
 - Dark mode
+- Click an event for its time, location and description (plain text, links removed)
 - Calendars can be hidden and shown again from the "Kalender" menu
 - The page reloads by itself when the view changes (e.g. from a Stream Deck) and every 5 minutes
 
@@ -134,10 +135,12 @@ every request, so changes show up without a restart.
 -1.AT 15:00 Monatsabschluss
 25.12. #e53935 Weihnachtsfeier
 24.12.2026 18:00 Bescherung
+1. 10:00 Jour fixe | Raum 3 | Agenda vorher rumschicken
 ```
 
 Without an end time an event lasts 30 minutes, without a time it is all-day. A color like `#e53935` before the
-title tints the event on the web page (the e-ink PNG stays gray). If the day doesn't exist in a month
+title tints the event on the web page (the e-ink PNG stays gray). After the title, `| location | description`
+show up when you click the event. If the day doesn't exist in a month
 (the 31st in April, the 29th of February), the event is skipped. Lines that don't match are ignored.
 
 With `TERMINE` set, "+ Termin" in the menu opens a form to add a rule and lists the existing ones with ✕ to delete.
@@ -153,7 +156,8 @@ Events from the Samsung Calendar app come along if they are stored in the Google
 
 If your Outlook calendar can't be published as ICS, `teams_ics.py` fetches the events through
 [teams-for-linux](https://github.com/IsmaelMartinez/teams-for-linux) (MQTT command `get-calendar`, Microsoft Graph)
-and writes them to `teams.ics` every 5 minutes. The file only contains titles and times.
+and writes them to `teams.ics` every 5 minutes. The file contains titles, times, location and the description as
+plain text, without links, the dial-in block (join link, meeting ID, passcode) or attendees.
 
 1. In the teams-for-linux `config.json`, set `"graphApi": {"enabled": true}` and configure MQTT
    (`commandTopic` `command`). If you changed its `topicPrefix` from `teams`, set the same value as `TEAMS_TOPIC`.

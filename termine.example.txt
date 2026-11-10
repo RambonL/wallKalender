@@ -6,10 +6,10 @@
 #       25.12.      every year on 25 December
 #       24.12.2026  once (24.12.26 works too)
 # Then optional time "09:00" (30 min) or "09:00-09:45"; without a time the event is all-day.
-# Then optional color "#e53935" (web page only), then the title.
+# Then optional color "#e53935" (web page only), then the title, optional "| location | description".
 
 4.AT 09:00 #4a90d9 Reisekosten abrechnen
-1. 10:00-10:30 Miete prüfen
+1. 10:00-10:30 Miete prüfen | Online-Banking
 10.AT Zeiterfassung
 -1.AT 15:00 Monatsabschluss
 25.12. #e53935 Weihnachtsfeier
