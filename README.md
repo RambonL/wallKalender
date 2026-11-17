@@ -167,9 +167,11 @@ plain text, without links, the dial-in block (join link, meeting ID, passcode) o
 The file goes to `teams.ics` in the current directory. Use `-o /path/teams.ics` (or `TEAMS_ICS`) to put it
 somewhere else, and point `ICS_URLS` there.
 
-`get-calendar` returns at most 10 events per request
-([#3202](https://github.com/IsmaelMartinez/teams-for-linux/issues/3202)), so `teams_ics.py` keeps splitting the
-time range until it has everything.
+`teams_ics.py` asks for one week at a time: since teams-for-linux 2.32 a whole range comes back in one answer,
+with the HTML body about 20 kB per event, and answers above roughly 2 MB don't get through an MQTT broker.
+Older versions return at most 10 events per request
+([#3202](https://github.com/IsmaelMartinez/teams-for-linux/issues/3202)); then the week is split further
+until everything is there.
 
 ## License
 

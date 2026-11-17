@@ -33,6 +33,7 @@ UTC = timezone.utc
 PREFIX = os.environ.get("TEAMS_TOPIC", "teams")
 COMMAND, ANSWER = f"{PREFIX}/command", f"{PREFIX}/calendar"
 WIDE_SECONDS = 3600  # so oft wird der weite Bereich (2 Monate zurück bis 6 voraus) neu geholt
+CHUNK = timedelta(days=7)  # ponytail: eine Woche ≈ 0,3 MB; erst bei >100 Terminen pro Woche zu groß für den Broker
 
 
 def utc(t):
@@ -65,12 +66,15 @@ def month_range(today):
 
 
 def fetch(ask, start, end):
-    """Alle Termine von start bis end.
+    """Alle Termine von start bis end, höchstens CHUNK auf einmal.
 
-    Workaround für https://github.com/IsmaelMartinez/teams-for-linux/issues/3202: get-calendar liefert höchstens
-    10 Termine. Steht @odata.nextLink in der Antwort, fehlen welche, dann den Zeitraum halbieren und beide Hälften
-    einzeln fragen. Ist das Issue behoben, reicht eine Anfrage mit "top".
+    Ab teams-for-linux 2.32 kommt ein Zeitraum komplett in einer Antwort, samt HTML-Body etwa 20 kB pro Termin;
+    ab etwa 2 MB kommt die Antwort beim MQTT-Broker nicht mehr durch, daher nie mehr als eine Woche fragen.
+    Ältere Versionen liefern höchstens 10 Termine (https://github.com/IsmaelMartinez/teams-for-linux/issues/3202):
+    steht @odata.nextLink in der Antwort, fehlen welche, dann den Zeitraum halbieren und beide Hälften einzeln fragen.
     """
+    if end - start > CHUNK:
+        return fetch(ask, start, start + CHUNK) + fetch(ask, start + CHUNK, end)
     data = ask(start, end)
     if "@odata.nextLink" not in data or end - start <= timedelta(hours=1):  # ponytail: >10 Termine in 1 h, Rest fehlt
         return data["value"]

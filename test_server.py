@@ -1,7 +1,8 @@
 """Selbsttest: .venv/bin/python test_server.py [ordner]  (mit Ordner: Vorschau-PNGs dort ablegen)"""
+import queue
 import sys
 import tempfile
-from datetime import date
+from datetime import date, timedelta
 
 import icalendar
 
@@ -277,15 +278,22 @@ G += [g("Messe", "2026-11-23T00:00:00", "2026-11-26T00:00:00", allday=True),
 utc = teams_ics.utc
 
 
-def fake_ask(start, end):  # verhält sich wie teams-for-linux: höchstens 10 Termine, sonst nextLink
+def fake_ask(start, end):  # wie teams-for-linux vor 2.32: wenige Termine (dort 10, hier 3), sonst nextLink
     hit = [x for x in G if utc(x["start"]) < end and utc(x["end"]) > start]
-    return {"value": hit[:10], **({"@odata.nextLink": "…"} if len(hit) > 10 else {})}
+    return {"value": hit[:3], **({"@odata.nextLink": "…"} if len(hit) > 3 else {})}
+
+
+def fake_ask_neu(start, end):  # wie ab 2.32: alles auf einmal; mehr als eine Woche kommt beim Broker nicht durch
+    if end - start > timedelta(days=7):
+        raise queue.Empty
+    return {"value": [x for x in G if utc(x["start"]) < end and utc(x["end"]) > start]}
 
 
 start, end = teams_ics.month_range(date(2026, 11, 9))
 assert (start.isoformat(), end.isoformat()) == ("2026-10-25T23:00:00+00:00", "2027-01-03T23:00:00+00:00")  # 26.10.–3.1. Berlin
 got = teams_ics.fetch(fake_ask, start, end)
 assert {x["id"] for x in got} == {x["id"] for x in G}
+assert {x["id"] for x in teams_ics.fetch(fake_ask_neu, start, end)} == {x["id"] for x in G}
 ws, wend = teams_ics.wide_range(date(2026, 11, 9))
 assert (ws.isoformat(), wend.isoformat()) == ("2026-08-31T22:00:00+00:00", "2027-05-31T22:00:00+00:00")  # 1.9.–31.5. Berlin
 gone = g("Gelöscht", "2026-11-10T08:00:00", "2026-11-10T09:00:00")  # im stündlichen Abruf, inzwischen in Teams gelöscht
