@@ -737,7 +737,9 @@ setInterval(async () => {
 
 
 def urlaub(title):
-    return "urlaub" in title.lower()
+    """Urlaub und Gleitzeit sind pink wie Feiertage, zurückgenommener Urlaub ("Urlaub, Urlaub Zurückn.") nicht."""
+    t = title.lower()
+    return any(w in t for w in ("urlaub", "gleitzeit")) and "zurückn" not in t
 
 
 def html_items(items):

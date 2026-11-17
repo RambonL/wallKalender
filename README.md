@@ -6,7 +6,7 @@ as a web page and as a grayscale PNG (1872×1404) for an e-ink display.
 - **Month** and **week** view; the week as an Outlook-style time grid or as a list; weekends can be hidden
 - Paging with ‹ › and "Heute" (today), calendar week number in the Monday cell
 - **Working days** "AT n" per month; vacation counts as a working day, public holidays (NRW, Germany) don't
-- Vacation and holidays highlighted pink, Teams meetings blue, all-day events gray
+- Vacation ("Urlaub" or "Gleitzeit" in the title) and holidays highlighted pink, Teams meetings blue, all-day events gray
 - Event time as start, start–end, or start with duration
 - Dark mode
 - Click an event for its time, location and description (plain text, links removed)

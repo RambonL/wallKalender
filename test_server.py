@@ -101,6 +101,7 @@ assert server.klartext('<html><head><style>p{margin:0}</style></head><body><p>Ha
 assert "feiertag" in server.day_class(date(2026, 11, 1), date(2026, 11, 5), 6, 7, [])              # Allerheiligen pink
 assert "feiertag" not in server.day_class(date(2026, 11, 7), date(2026, 11, 5), 5, 7, [])
 assert "urlaubstag" in server.day_class(date(2026, 11, 18), date(2026, 11, 5), 2, 7, evs[date(2026, 11, 18)])  # ganze Zelle
+assert server.urlaub("Gleitzeit") and server.urlaub("halber Tag Urlaub") and not server.urlaub("Daily") and not server.urlaub("Urlaub, Urlaub Zurückn.")
 assert "urlaubstag" not in server.day_class(date(2026, 11, 17), date(2026, 11, 5), 1, 7, evs[date(2026, 11, 17)])
 
 # Zeitanzeige-Schalter: von–bis bzw. Dauer
