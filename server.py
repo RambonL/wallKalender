@@ -690,6 +690,8 @@ if (m) {
   };
   cells.forEach((c, i) => c.addEventListener("click", () => show(Math.floor(i / n))));
   show(Math.max(0, Math.floor(cells.findIndex(c => c.classList.contains("today")) / n)));
+  const heute = ag.querySelector("h3.today");  // beim Laden bei heute anfangen, die Tage davor liegen darüber
+  if (heute) ag.scrollTop = heute.getBoundingClientRect().top - ag.getBoundingClientRect().top;
 }
 const art = document.querySelector("[name=art]");  // Formular „+ Termin“: Datum oder n, das andere aus
 if (art) {
