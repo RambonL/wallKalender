@@ -3,6 +3,7 @@
 
 GET /                  Webseite der aktuellen Ansicht (lädt neu bei Ansichts- oder Datumswechsel und alle 5 min)
 GET /image.png         aktuelle Ansicht als PNG (für ein E-Ink-Display)
+GET /manifest.json     Name und Symbol (/icon.png) für „Zum Startbildschirm hinzufügen“
 GET|POST /view/<name>  Ansicht wechseln (month|week), z. B. Stream Deck: curl http://host:8080/view/week
 GET|POST /weekend      Wochenende ein-/ausblenden (Monat und Woche)
 GET|POST /prev /next   einen Monat bzw. eine Woche zurück/weiter; /today zurück zu heute
@@ -817,7 +818,29 @@ def html_week(shown, today):
 
 
 VIEWS = {"month": ("Monat", render_month, html_month), "week": ("Woche", render_week, html_week)}
-START = int(time.time())  # ändert /state nach Neustart, Browser lädt dann neuen Code
+
+
+def icon_png():
+    """App-Symbol (Startbildschirm, Tab): Kalenderblatt mit rotem Kopf, ein Tag im Raster markiert.
+    Alles innerhalb des runden Sicherheitsbereichs, damit Android es als maskable Symbol zuschneiden darf."""
+    img = Image.new("RGB", (512, 512), "#1e1e1e")
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((116, 126, 396, 396), 28, fill="#fff")
+    d.rounded_rectangle((116, 126, 396, 196), 28, fill="#d32f2f", corners=(True, True, False, False))
+    for i in range(9):
+        x, y = 146 + i % 3 * 80, 220 + i // 3 * 58
+        d.rounded_rectangle((x, y, x + 60, y + 40), 6, fill="#d32f2f" if i == 4 else "#ccc")
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
+ICON = icon_png()
+MANIFEST = json.dumps({"name": "wallKalender", "short_name": "wallKalender", "start_url": "/", "display": "standalone",
+                       "background_color": "#1e1e1e",
+                       "icons": [{"src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": p}
+                                 for p in ("any", "maskable")]}).encode()
+START =int(time.time())  # ändert /state nach Neustart, Browser lädt dann neuen Code
 view = "month"  # ponytail: view/weekend nur im RAM, nach Neustart wieder Monat mit Wochenende; persistieren falls das stört
 weekend = True
 offset = 0  # Pfeile: Monate bzw. Wochen ab heute; Ansichtswechsel setzt auf 0 zurück
@@ -863,7 +886,8 @@ def page(today, kal=False):
     nav += f'<a href="/dark">{"☑" if dark else "☐"} Dunkel</a>'
     nav += '<a href="#" onclick="neuTermin();return false">+ Termin</a>' * bool(TERMINE)
     return (f'<!doctype html><html lang="de"{" class=dark" * dark}><head><meta charset="utf-8">'
-            f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>Kalender</title>'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>wallKalender</title>'
+            '<link rel=manifest href=/manifest.json><link rel=icon href=/icon.png><link rel=apple-touch-icon href=/icon.png>'
             f'<style>{CSS}{theme_css()}</style></head><body>'
             f'<header><div class="titel"><a class="heute" href="/today">Heute</a>'  # links vom Titel, damit nichts springt
             f'<a class="arrow" href="/prev" aria-label="zurück">‹</a><a class="arrow" href="/next" aria-label="weiter">›</a>'
@@ -952,6 +976,10 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(next_text(datetime.now(TZ), int(path[7:] or 1)).encode(), "text/plain; charset=utf-8")
         elif path == "state":
             self.reply(state(today).encode(), "text/plain")
+        elif path == "icon.png":
+            self.reply(ICON, "image/png")
+        elif path == "manifest.json":
+            self.reply(MANIFEST, "application/manifest+json")
         elif path == "image.png":
             buf = io.BytesIO()
             VIEWS[view][1](shown_date(today), today).save(buf, "PNG")

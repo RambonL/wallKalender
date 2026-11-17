@@ -261,6 +261,8 @@ with tempfile.NamedTemporaryFile("w", suffix=".txt") as f:
     assert server.REGEL.fullmatch("1. #Hashtag Titel")[7] == "#Hashtag Titel"                  # kein Farbcode: Teil vom Titel
 server.TERMINE = ""
 assert ">+ Termin</a>" not in server.page(today) and "<dialog id=tdlg" not in server.page(today)
+assert "<link rel=manifest href=/manifest.json>" in server.page(today)                     # Startbildschirm: Name, Symbol
+assert server.json.loads(server.MANIFEST)["name"] == "wallKalender" and server.ICON[:8] == b"\x89PNG\r\n\x1a\n"
 assert not any(t == "Miete" for i in server.events(date(2026, 11, 1), date(2026, 11, 30)).values() for *_, t, _ in i)
 
 # Teams: trotz 10er-Grenze pro Antwort kommen alle Termine an, und die ICS-Datei landet richtig im Kalender
